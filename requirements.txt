@@ -1,5 +1,6 @@
 streamlit
+pandas
 firebase-admin
 google-cloud-firestore
-pandas
-requests
+matplotlib
+numpy
