@@ -8,7 +8,30 @@ import urllib.parse
 
 # ---------------- Streamlit Page Config ----------------
 st.set_page_config(page_title="കൊളങ്ങര കുടുംബനിധി ", layout="wide")
+st.dataframe(df, use_container_width=True)
+st.bar_chart(df, use_container_width=True)
+st.markdown("""
+<style>
+/* Make text scale on small screens */
+html, body, [class*="css"]  {
+    font-size: 16px;
+}
 
+/* Ensure input boxes take full width */
+.stTextInput, .stSelectbox, .stButton button {
+    width: 100% !important;
+}
+
+/* Reduce padding on mobile */
+@media (max-width: 768px) {
+    .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+        padding-top: 1rem;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
 # ---------------- Hide Streamlit Default UI ----------------
 import streamlit as st
 
@@ -1154,6 +1177,7 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
+
 
 
 
