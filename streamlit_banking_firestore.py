@@ -17,6 +17,18 @@ st.markdown("""
     header {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
+hide_streamlit_ui = """
+    <style>
+    /* Hide MainMenu, footer and viewer toolbar */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stAppDeployButton {display: none;}
+    .stActionButton {display: none;}
+    .viewerBadge_container__1QSob {display: none;}
+    </style>
+"""
+import streamlit as st
+st.markdown(hide_streamlit_ui, unsafe_allow_html=True)
 
 # ---------------- Firebase Init ----------------
 def init_firebase():
@@ -1140,3 +1152,4 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
+
