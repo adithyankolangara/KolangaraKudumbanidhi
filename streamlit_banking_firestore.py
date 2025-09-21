@@ -1027,11 +1027,18 @@ if is_admin():
         )
         loan_interest = st.number_input(
             "Loan Interest Rate (%)", 
-            value=loan_rules.get("interest_pct", 10.0), step=0.1
+            value=float(loan_rules.get("interest_pct", 10.0)),  # ensure float
+            min_value=0.0,      # optional, float
+            max_value=100.0,    # optional, float
+            step=0.1            # float step for fine adjustments
         )
+
         deposit_pct_for_loan = st.number_input(
-            "Deposit % Used for Loan Eligibility", 
-            value=loan_rules.get("deposit_pct_for_loan", 50.0), step=1.0
+            "How much % of total deposit can be given for loan (%)", 
+            value=float(loan_rules.get("deposit_pct_for_loan", 10.0)),  # ensure float
+            min_value=0.0,      # optional, float
+            max_value=100.0,    # optional, float
+            step=0.1            # float step for fine adjustments
         )
 
         # ---------------- Live Loan Summary ----------------
@@ -1177,6 +1184,7 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
+
 
 
 
