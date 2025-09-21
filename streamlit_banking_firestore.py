@@ -411,11 +411,19 @@ def calculate_emi(principal, interest_rate, tenure_months):
     return round(emi, 2)
 
 def max_loan_amount(user_id, family_name):
+    """
+    Max loan is based on family's total deposits × deposit_pct_for_loan,
+    minus all active loans already taken by that family.
+    """
     rules = get_loan_rules()
-    total_dep = get_total_deposits(user_id=user_id)
-    user_existing_loans = sum(l["principal_amount"] for l in get_user_loans(user_id))
-    max_user_amount = (total_dep * rules["deposit_pct_for_loan"]/100) - user_existing_loans
-    return max(0, max_user_amount)
+    # total deposits at family level
+    family_total_dep = get_total_deposits(family_name=family_name)
+    # all active family loans (sum of principals)
+    family_existing_loans = sum(l["principal_amount"] for l in get_family_loans(family_name))
+    # maximum allowed based on rules
+    max_family_amount = (family_total_dep * rules["deposit_pct_for_loan"] / 100) - family_existing_loans
+    return max(0, max_family_amount)
+
 
 # ---------------- Admin Dashboard ----------------
 if is_admin():
