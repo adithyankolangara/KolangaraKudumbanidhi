@@ -996,96 +996,96 @@ if is_admin():
                     emi=emi_amount,
                     tenure=tenure_months
                 )
-        elif menu == "Rules / Config":
-            st.subheader("Configure Rules")
+    elif menu == "Rules / Config":
+        st.subheader("Configure Rules")
 
-            # ---------------- Fetch existing rules ----------------
-            rules_doc = db.collection("config").document("rules").get()
-            rules = rules_doc.to_dict() if rules_doc.exists else {}
+        # ---------------- Fetch existing rules ----------------
+        rules_doc = db.collection("config").document("rules").get()
+        rules = rules_doc.to_dict() if rules_doc.exists else {}
 
-            loan_rules_doc = db.collection("config").document("loan_rules").get()
-            loan_rules = loan_rules_doc.to_dict() if loan_rules_doc.exists else {}
+        loan_rules_doc = db.collection("config").document("loan_rules").get()
+        loan_rules = loan_rules_doc.to_dict() if loan_rules_doc.exists else {}
 
-            st.markdown("### Deposit / General Rules")
-            deposit_interest = st.number_input(
-                "Deposit Interest (%)", 
-                value=rules.get("deposit_interest_pct", 5.0), step=0.1
-            )
-            loan_capability = st.number_input(
-                "Loan Capability (%)", 
-                value=rules.get("loan_capability_pct", 50.0), step=1.0
-            )
+        st.markdown("### Deposit / General Rules")
+        deposit_interest = st.number_input(
+            "Deposit Interest (%)", 
+            value=rules.get("deposit_interest_pct", 5.0), step=0.1
+        )
+        loan_capability = st.number_input(
+            "Loan Capability (%)", 
+            value=rules.get("loan_capability_pct", 50.0), step=1.0
+        )
 
-            st.markdown("### Loan Rules")
-            family_max_loans = st.number_input(
-                "Max Loans per Family", 
-                value=loan_rules.get("family_max_loans", 3), min_value=1, step=1
-            )
-            user_max_loans = st.number_input(
-                "Max Loans per User", 
-                value=loan_rules.get("user_max_loans", 1), min_value=1, step=1
-            )
-            loan_interest = st.number_input(
-                "Loan Interest Rate (%)", 
-                value=loan_rules.get("interest_pct", 10.0), step=0.1
-            )
-            deposit_pct_for_loan = st.number_input(
-                "Deposit % Used for Loan Eligibility", 
-                value=loan_rules.get("deposit_pct_for_loan", 50.0), step=1.0
-            )
+        st.markdown("### Loan Rules")
+        family_max_loans = st.number_input(
+            "Max Loans per Family", 
+            value=loan_rules.get("family_max_loans", 3), min_value=1, step=1
+        )
+        user_max_loans = st.number_input(
+            "Max Loans per User", 
+            value=loan_rules.get("user_max_loans", 1), min_value=1, step=1
+        )
+        loan_interest = st.number_input(
+            "Loan Interest Rate (%)", 
+            value=loan_rules.get("interest_pct", 10.0), step=0.1
+        )
+        deposit_pct_for_loan = st.number_input(
+            "Deposit % Used for Loan Eligibility", 
+            value=loan_rules.get("deposit_pct_for_loan", 50.0), step=1.0
+        )
 
-            # ---------------- Live Loan Summary ----------------
-            st.markdown("### Current Active Loans")
+        # ---------------- Live Loan Summary ----------------
+        st.markdown("### Current Active Loans")
 
-            families = get_all_families()
-            if families:
-                family_summary = []
-                loan_summary = []
+        families = get_all_families()
+        if families:
+            family_summary = []
+            loan_summary = []
 
-                for fam in families:
-                    fam_loans = get_family_loans(fam)
-                    total_active_loans_family = len(fam_loans)
-                    family_summary.append({
+            for fam in families:
+                fam_loans = get_family_loans(fam)
+                total_active_loans_family = len(fam_loans)
+                family_summary.append({
+                    "Family": fam,
+                    "Active Loans": total_active_loans_family,
+                    "Max Allowed": family_max_loans
+                })
+
+                users = get_users_by_family(fam)
+                for u in users:
+                    user_loans = get_user_loans(u["user_id"])
+                    loan_summary.append({
                         "Family": fam,
-                        "Active Loans": total_active_loans_family,
-                        "Max Allowed": family_max_loans
+                        "User": u["first_name"],
+                        "User ID": u["user_id"],
+                        "Active Loans": len(user_loans),
+                        "Max Allowed": user_max_loans
                     })
 
-                    users = get_users_by_family(fam)
-                    for u in users:
-                        user_loans = get_user_loans(u["user_id"])
-                        loan_summary.append({
-                            "Family": fam,
-                            "User": u["first_name"],
-                            "User ID": u["user_id"],
-                            "Active Loans": len(user_loans),
-                            "Max Allowed": user_max_loans
-                        })
+            st.markdown("#### Family Level Summary")
+            st.dataframe(pd.DataFrame(family_summary).sort_values("Family"))
 
-                st.markdown("#### Family Level Summary")
-                st.dataframe(pd.DataFrame(family_summary).sort_values("Family"))
+            st.markdown("#### User Level Breakdown")
+            st.dataframe(pd.DataFrame(loan_summary).sort_values(["Family", "User"]))
 
-                st.markdown("#### User Level Breakdown")
-                st.dataframe(pd.DataFrame(loan_summary).sort_values(["Family", "User"]))
+        else:
+            st.info("No families found.")
 
-            else:
-                st.info("No families found.")
-
-            # ---------------- Update Rules Button ----------------
-            if st.button("Update Rules"):
-                # Update general rules
-                db.collection("config").document("rules").set({
-                    "deposit_interest_pct": deposit_interest,
-                    "loan_capability_pct": loan_capability
-                })
-                # Update loan rules
-                db.collection("config").document("loan_rules").set({
-                    "family_max_loans": family_max_loans,
-                    "user_max_loans": user_max_loans,
-                    "interest_pct": loan_interest,
-                    "deposit_pct_for_loan": deposit_pct_for_loan
-                })
-                st.success("✅ Rules updated successfully")
+        # ---------------- Update Rules Button ----------------
+        if st.button("Update Rules"):
+            # Update general rules
+            db.collection("config").document("rules").set({
+                "deposit_interest_pct": deposit_interest,
+                "loan_capability_pct": loan_capability
+            })
+            # Update loan rules
+            db.collection("config").document("loan_rules").set({
+                "family_max_loans": family_max_loans,
+                "user_max_loans": user_max_loans,
+                "interest_pct": loan_interest,
+                "deposit_pct_for_loan": deposit_pct_for_loan
+            })
+            st.success("✅ Rules updated successfully")
         
     elif menu == "Repay Loan":
         st.subheader("Repay Loan")
@@ -1177,7 +1177,6 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
-
 
 
 
