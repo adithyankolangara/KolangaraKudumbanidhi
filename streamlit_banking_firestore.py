@@ -8,8 +8,8 @@ import urllib.parse
 
 # ---------------- Streamlit Page Config ----------------
 st.set_page_config(page_title="കൊളങ്ങര കുടുംബനിധി ", layout="wide")
-st.dataframe(df, use_container_width=True)
-st.bar_chart(df, use_container_width=True)
+# st.dataframe(df, use_container_width=True)
+# st.bar_chart(df, use_container_width=True)
 st.markdown("""
 <style>
 /* Make text scale on small screens */
@@ -1177,6 +1177,7 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
+
 
 
 
