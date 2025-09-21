@@ -587,13 +587,13 @@ if is_admin():
         "User Management",
         "Add Deposit",
         "Add Withdrawal",
-        "Transaction History / Totals",
+        "Transaction History",
         "Deposit Summary",
         "Send WhatsApp Summary","Repay Loan","Loan Management","Rules / Config","Dashboard"], key="admin_sidebar_menu")
 
     # ---------------- Transaction History / Totals ----------------
-    if menu == "Transaction History / Totals":
-        st.subheader("Transaction History / Totals")
+    if menu == "Transaction History":
+        st.subheader("Transaction History")
         families = get_all_families()
         selected_family = st.selectbox("Select Family (Optional)", ["All"] + families, key="txn_family_select")
         family_name = selected_family if selected_family != "All" else None
@@ -1184,6 +1184,7 @@ if is_admin():
     
     elif menu == "Dashboard":
         display_dashboard()
+
 
 
 
