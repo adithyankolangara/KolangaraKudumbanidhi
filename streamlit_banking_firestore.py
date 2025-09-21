@@ -8,8 +8,6 @@ import urllib.parse
 
 # ---------------- Streamlit Page Config ----------------
 st.set_page_config(page_title="കൊളങ്ങര കുടുംബനിധി ", layout="wide")
-# st.dataframe(df, use_container_width=True)
-# st.bar_chart(df, use_container_width=True)
 st.markdown("""
 <style>
 /* Make text scale on small screens */
@@ -54,8 +52,6 @@ hide_streamlit_style = """
     </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
-# ---------------- Firebase Init ----------------
 def init_firebase():
     """
     Initialize firebase-admin using inline key JSON (directly parsed in memory).
@@ -91,6 +87,7 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
 
     return firestore.client()
+# ---------------- Firebase Init ----------------
 db = init_firebase()
 
 # ---------------- Automatic DB Bootstrap ----------------
@@ -434,7 +431,6 @@ def send_whatsapp_action(user, action_type, **kwargs):
     send_whatsapp(user.get("mobile_number"), msg)
 
 # ---------------- Transactions ----------------
-# ---------------- Transactions ----------------
 def add_deposit(user_id, amount, date, remarks=None):
     user = get_user(user_id)
     if not user:
@@ -589,7 +585,7 @@ if is_admin():
         "Add Withdrawal",
         "Transaction History",
         "Deposit Summary",
-        "Send WhatsApp Summary","Repay Loan","Loan Management","Rules / Config","Dashboard"], key="admin_sidebar_menu")
+        "Send WhatsApp Summary","Repay Loan","Loan Management","Rules / Config","Dashboard","Whole Summary","Distribute Interest"], key="admin_sidebar_menu")
 
     # ---------------- Transaction History / Totals ----------------
     if menu == "Transaction History":
@@ -1184,6 +1180,155 @@ if is_admin():
     
     elif menu == "Dashboard":
         display_dashboard()
+    elif menu == "Whole Summary":
+        st.title("📊 Mini Banking Full Summary")
+
+        tabs = st.tabs([
+            "Summary", 
+            "Income from Deposits", 
+            "Income from Other Sources", 
+            "Expenses", 
+            "Deposits Summary",
+            "Add Income/Expense"
+        ])
+
+        # --- Fetch Data ---
+        users_docs = list(db.collection("users").stream())
+        users = [u.to_dict() for u in users_docs]
+        families_list = get_all_families()
+        income_docs = list(db.collection("income").stream())
+        expenses_docs = list(db.collection("expenses").stream())
+
+        # --- Summary Tab ---
+        with tabs[0]:
+            total_income = sum(i.to_dict()["amount"] for i in income_docs)
+            total_expenses = sum(e.to_dict()["amount"] for e in expenses_docs)
+            total_savings = get_total_deposits() - get_total_withdrawals()
+            st.metric("Total Savings", total_savings)
+            st.metric("Total Income", total_income)
+            st.metric("Total Expenses", total_expenses)
+            st.metric("Number of Users", len(users))
+            st.metric("Number of Families", len(families_list))
+
+        # --- Income from Deposits ---
+        with tabs[1]:
+            st.subheader("Deposit Interest Distribution")
+            # Fetch interest % from config
+            rules_ref = db.collection("config").document("rules").get()
+            deposit_interest_pct = 5.0
+            if rules_ref.exists:
+                deposit_interest_pct = rules_ref.to_dict().get("deposit_interest_pct", 5.0)
+
+            deposit_summary = []
+            total_deposit_all = sum(get_total_deposits(user_id=u["user_id"]) for u in users)
+
+            for u in users:
+                user_dep = get_total_deposits(user_id=u["user_id"])
+                if total_deposit_all > 0:
+                    user_interest = round(user_dep * deposit_interest_pct / 100, 2)
+                else:
+                    user_interest = 0.0
+
+                deposit_summary.append({
+                    "User": u["first_name"],
+                    "User ID": u["user_id"],
+                    "Family": u["family_name"],
+                    "Deposit": user_dep,
+                    f"Interest ({deposit_interest_pct}%)": user_interest,
+                    "Balance": get_balance(user_id=u["user_id"]) + user_interest
+                })
+
+            st.dataframe(pd.DataFrame(deposit_summary).sort_values(["Family", "User"]))
+
+        # --- Income from Other Sources ---
+        with tabs[2]:
+            income_other = [i.to_dict() for i in income_docs if i.to_dict()["source"] != "Deposit Interest"]
+            st.dataframe(pd.DataFrame(income_other))
+
+        # --- Expenses ---
+        with tabs[3]:
+            st.dataframe(pd.DataFrame([e.to_dict() for e in expenses_docs]))
+
+        # --- Deposits Summary (Family-wise & User-wise) ---
+        with tabs[4]:
+            deposit_summary = []
+            for fam in families_list:
+                users_in_fam = get_users_by_family(fam)
+                for u in users_in_fam:
+                    deposit_summary.append({
+                        "Family": fam,
+                        "User": u["first_name"],
+                        "User ID": u["user_id"],
+                        "Total Deposit": get_total_deposits(user_id=u["user_id"]),
+                        "Balance": get_balance(user_id=u["user_id"])
+                    })
+            st.dataframe(pd.DataFrame(deposit_summary).sort_values(["Family", "User"]))
+
+        # --- Add Income / Expense (Admin Action) ---
+        with tabs[5]:
+            st.subheader("Add General Income / Expense")
+            action = st.radio("Select Action", ["Add Income", "Add Expense"])
+            if action == "Add Income":
+                income_source = st.text_input("Income Source (e.g., Bank Interest)")
+                income_amount = st.number_input("Amount", min_value=0.0, step=0.01)
+                if st.button("Add Income"):
+                    db.collection("income").document().set({
+                        "source": income_source,
+                        "amount": float(income_amount),
+                        "date": datetime.today().isoformat(),
+                        "created_at": datetime.now(UTC).isoformat()
+                    })
+                    st.success(f"✅ Income of {income_amount} added for '{income_source}'")
+            else:
+                expense_desc = st.text_input("Expense Description")
+                expense_amount = st.number_input("Amount", min_value=0.0, step=0.01, key="expense_amt")
+                if st.button("Add Expense"):
+                    db.collection("expenses").document().set({
+                        "description": expense_desc,
+                        "amount": float(expense_amount),
+                        "date": datetime.today().isoformat(),
+                        "created_at": datetime.now(UTC).isoformat()
+                    })
+                    st.success(f"✅ Expense of {expense_amount} added for '{expense_desc}'")
+    elif menu == "Distribute Interest":
+        st.title("💰 Distribute Interest / Income to Users")
+
+        # Input: total interest / income to distribute
+        total_income = st.number_input("Enter total interest/income to distribute:", min_value=0.0, value=1000.0, step=100.0)
+        income_date = st.date_input("Date of distribution", datetime.today())
+        remarks = st.text_area("Remarks (optional)")
+
+        if st.button("Distribute"):
+            # 1. Fetch all users and their deposits
+            users = [u.to_dict() for u in db.collection("users").stream()]
+            total_deposits = sum(get_total_deposits(u["user_id"]) for u in users)
+            if total_deposits == 0:
+                st.error("⚠️ Total deposits are 0. Cannot distribute interest.")
+            else:
+                # 2. Distribute proportionally
+                for u in users:
+                    user_deposit = get_total_deposits(u["user_id"])
+                    user_share = (user_deposit / total_deposits) * total_income
+                    prev_balance, new_balance = add_deposit(
+                    user_id=u["user_id"],
+                    amount=round(user_share, 2),
+                    date=income_date,
+                    remarks=remarks or "Interest / Income Distribution"
+                    )
+                    send_whatsapp_action(
+                        u,
+                        action_type="deposit", 
+                        amount=round(user_share, 2),
+                        date=str(income_date),
+                        prev_balance=prev_balance,
+                        new_balance=new_balance,
+                        remarks="Intrest Payout"
+                    )
+
+                st.success(f"✅ Distributed {total_income} proportionally to {len(users)} users based on their deposits.")
+
+
+
 
 
 
