@@ -1,17 +1,25 @@
-# streamlit_banking_firestore.py
 import os
 import streamlit as st
 import pandas as pd
 import firebase_admin
 from firebase_admin import credentials, firestore
-from datetime import datetime
-import matplotlib.pyplot as plt
-import random
+from datetime import datetime, UTC
 from pathlib import Path
+import urllib.parse
 
+# ---------------- Streamlit Page Config ----------------
 st.set_page_config(page_title="Mini Banking App (Firestore)", layout="wide")
 
-# ---------------- Firebase init ----------------
+# ---------------- Hide Streamlit Default UI ----------------
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+""", unsafe_allow_html=True)
+
+# ---------------- Firebase Init ----------------
 def init_firebase():
     """
     Initialize firebase-admin using inline key JSON (directly parsed in memory).
@@ -49,6 +57,27 @@ def init_firebase():
     return firestore.client()
 db = init_firebase()
 
+# ---------------- Automatic DB Bootstrap ----------------
+def bootstrap_db():
+    rules_ref = db.collection("config").document("rules")
+    if not rules_ref.get().exists:
+        rules_ref.set({
+            "deposit_interest_pct": 5.0,
+            "loan_interest_pct": 10.0,
+            "loan_capability_pct": 50.0
+        })
+
+    admin_ref = db.collection("accounts").document("admin")
+    if not admin_ref.get().exists:
+        admin_ref.set({
+            "username": "admin",
+            "password": "admin123",   # ⚠️ change in production!
+            "role": "admin",
+            "created_at": datetime.now(UTC).isoformat()
+        })
+
+bootstrap_db()
+
 # ---------------- Authentication ----------------
 def login(username, password):
     doc = db.collection("accounts").document(username).get()
@@ -63,144 +92,847 @@ if "user" not in st.session_state:
     st.session_state.user = {"role": "guest"}
 
 if st.session_state.user.get("role") != "admin":
-    st.sidebar.info("🔓 Viewing as Guest (read-only)")
     with st.sidebar.form("login_form"):
-        uname = st.text_input("Username")
-        pwd = st.text_input("Password", type="password")
+        uname = st.text_input("Username", key="login_username")
+        pwd = st.text_input("Password", type="password", key="login_password")
         submitted = st.form_submit_button("Login")
         if submitted:
             acc = login(uname, pwd)
             if acc and acc.get("role") == "admin":
                 st.session_state.user = acc
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Invalid credentials or not an admin")
 else:
     st.sidebar.success(f"✅ Logged in as {st.session_state.user['username']} (Admin)")
-    if st.sidebar.button("Logout"):
+    if st.sidebar.button("Logout", key="logout_button"):
         st.session_state.user = {"role": "guest"}
-        st.experimental_rerun()
+        st.rerun()
+def display_dashboard():
+    st.title("📊 Mini Banking Analytics Dashboard")
+
+    families = get_all_families()
+
+    # ---------------- Family-wise Deposits ----------------
+    st.subheader("Family-wise Deposits / Withdrawals / Balance")
+    family_summary = []
+    for fam in families:
+        total_dep = get_total_deposits(family_name=fam)
+        total_with = get_total_withdrawals(family_name=fam)
+        balance = get_balance(family_name=fam)
+        family_summary.append({
+            "Family": fam,
+            "Total Deposits": total_dep,
+            "Total Withdrawals": total_with,
+            "Balance": balance
+        })
+    st.dataframe(pd.DataFrame(family_summary).sort_values("Family"))
+
+    # ---------------- User-wise Deposits ----------------
+    st.subheader("User-wise Deposits / Withdrawals / Balance")
+    user_summary = []
+    for fam in families:
+        users = get_users_by_family(fam)
+        for u in users:
+            total_dep = get_total_deposits(user_id=u["user_id"])
+            total_with = get_total_withdrawals(user_id=u["user_id"])
+            balance = get_balance(user_id=u["user_id"])
+            user_summary.append({
+                "Family": fam,
+                "User": u["first_name"],
+                "User ID": u["user_id"],
+                "Total Deposits": total_dep,
+                "Total Withdrawals": total_with,
+                "Balance": balance
+            })
+    st.dataframe(pd.DataFrame(user_summary).sort_values(["Family", "User"]))
+
+    # ---------------- Global Totals ----------------
+    st.subheader("Global Totals")
+    st.markdown(f"**Total Deposits:** {get_total_deposits()}")
+    st.markdown(f"**Total Withdrawals:** {get_total_withdrawals()}")
+    st.markdown(f"**Overall Balance:** {get_balance()}")
+
+    # ---------------- Loan Statistics ----------------
+    # ---------------- Loan Statistics ----------------
+    st.subheader("Active Loans per Family")
+    loan_summary_family = []
+    loan_summary_user = []
+
+    for fam in families:
+        fam_loans = get_family_loans(fam)
+        loan_summary_family.append({
+            "Family": fam,
+            "Active Loans": len(fam_loans),
+            "Total Loan Amount": sum(l["principal_amount"] for l in fam_loans),
+            "Total Remaining Amount": sum(l["remaining_amount"] for l in fam_loans)
+        })
+
+        users = get_users_by_family(fam)
+        for u in users:
+            user_loans = get_user_loans(u["user_id"])
+            for l in user_loans:
+                paid_emi_count = int(l['paid_amount'] // l['emi_amount'])
+                remaining_emi_count = int(max(0, (l['total_loan_amount'] - l['paid_amount']) // l['emi_amount']))
+                loan_summary_user.append({
+                    "Family": fam,
+                    "User": u["first_name"],
+                    "User ID": u["user_id"],
+                    "Loan ID": l["loan_id"],
+                    "Principal": l["principal_amount"],
+                    "Total Loan Amount": l["total_loan_amount"],
+                    "Remaining Amount": l["remaining_amount"],
+                    "EMI Amount": l["emi_amount"],
+                    "Tenure Months": l["tenure_months"],
+                    "Status": l["status"],
+                    "Paid EMIs": paid_emi_count,
+                    "Remaining EMIs": remaining_emi_count
+                })
+
+    st.markdown("#### Family Level Loan Summary")
+    st.dataframe(pd.DataFrame(loan_summary_family).sort_values("Family"))
+
+    st.markdown("#### User Level Loan Details")
+    st.dataframe(pd.DataFrame(loan_summary_user).sort_values(["Family", "User"]))
+
 
 def is_admin():
+    
     return st.session_state.user.get("role") == "admin"
 
-# ---------------- Helpers ----------------
-def now():
-    return datetime.utcnow().isoformat(sep=' ', timespec='seconds')
+# ---------------- User Management ----------------
+def get_all_families():
+    users = db.collection("users").stream()
+    families = sorted(set([u.to_dict().get("family_name", "") for u in users if u.to_dict().get("family_name")]))
+    return families
 
-def get_rules():
-    doc = db.collection("config").document("rules").get()
-    if doc.exists:
-        return doc.to_dict()
-    else:
-        defaults = {"deposit_interest_pct": 5.0, "loan_interest_pct": 10.0, "loan_capability_pct": 50.0}
-        db.collection("config").document("rules").set(defaults)
-        return defaults
-
-def set_rules(rules):
-    db.collection("config").document("rules").set(rules)
-
-def next_id(prefix, collection_name):
-    max_n = 0
-    for d in db.collection(collection_name).stream():
-        obj = d.to_dict()
-        did = obj.get("id") or d.id
-        if isinstance(did, str) and did.startswith(prefix + "_"):
+def get_next_user_id(family_name):
+    users = db.collection("users").where("family_name", "==", family_name).stream()
+    numbers = []
+    for u in users:
+        uid = u.to_dict().get("user_id", "")
+        if uid.startswith(family_name + "-"):
             try:
-                n = int(did.split("_")[-1])
-                if n > max_n:
-                    max_n = n
+                num = int(uid.split("-")[-1])
+                numbers.append(num)
             except:
                 pass
-    return f"{prefix}_{max_n + 1}"
+    next_num = max(numbers) + 1 if numbers else 1
+    return f"{family_name}-{next_num}"
 
-def get_all_users():
-    users = []
-    for d in db.collection("users").stream():
-        u = d.to_dict()
-        users.append({
-            "id": u.get("id", d.id),
-            "name": u.get("name", ""),
-            "family": u.get("family", ""),
-            "created_at": u.get("created_at", ""),
-            "allow_deposit": u.get("allow_deposit", True),
-            "balance": float(u.get("balance", 0.0))
+def add_user(first_name, family_name, mobile_number=None):
+    user_id = get_next_user_id(family_name)
+    ref = db.collection("users").document(user_id)
+    if ref.get().exists:
+        st.error("⚠️ User ID already exists (unexpected conflict)")
+    else:
+        ref.set({
+            "user_id": user_id,
+            "first_name": first_name,
+            "family_name": family_name,
+            "mobile_number": mobile_number,
+            "status": "active",
+            "created_at": datetime.now(UTC).isoformat()
         })
-    users.sort(key=lambda x: x["id"])
-    return users
+        st.success(f"✅ User {first_name} created with ID {user_id}!")
 
-def get_all_transactions():
-    tx = []
-    for d in db.collection("transactions").stream():
-        tx.append(d.to_dict())
-    tx.sort(key=lambda x: x.get("timestamp", ""), reverse=False)
-    return tx
+def update_user(user_id, first_name=None, family_name=None, status=None, mobile_number=None):
+    ref = db.collection("users").document(user_id)
+    if not ref.get().exists:
+        st.error("⚠️ User not found")
+    else:
+        updates = {}
+        if first_name:
+            updates["first_name"] = first_name
+        if family_name:
+            updates["family_name"] = family_name
+        if status:
+            updates["status"] = status
+        if mobile_number:
+            updates["mobile_number"] = mobile_number
+        if updates:
+            ref.update(updates)
+            st.success(f"✅ User {user_id} updated successfully!")
 
-def get_all_loans():
-    loans = []
-    for d in db.collection("loans").stream():
-        loans.append(d.to_dict())
-    loans.sort(key=lambda x: x.get("created_at", ""), reverse=False)
-    return loans
+def get_user(user_id):
+    ref = db.collection("users").document(user_id).get()
+    return ref.to_dict() if ref.exists else None
 
-def find_user(user_id):
-    doc = db.collection("users").document(user_id).get()
-    return doc.to_dict() if doc.exists else None
+def get_users_by_family(family_name):
+    users = db.collection("users").where("family_name", "==", family_name).stream()
+    return [u.to_dict() for u in users]
 
-# ---------------- Business logic ----------------
-# (same as your previous code: create_user, add_deposit, freeze_user,
-#  calculate_loan_capability, create_loan, add_interest_to_deposits,
-#  add_loan_interest_to_deposit)
+def move_user(user_id, new_family):
+    ref = db.collection("users").document(user_id)
+    doc = ref.get()
+    if not doc.exists:
+        st.error("⚠️ User not found")
+        return
+    user = doc.to_dict()
+    new_user_id = get_next_user_id(new_family)
+    db.collection("users").document(new_user_id).set({
+        **user,
+        "user_id": new_user_id,
+        "family_name": new_family,
+        "moved_from": user.get("family_name"),
+        "moved_at": datetime.now(UTC).isoformat()
+    })
+    ref.delete()
+    st.success(f"✅ User moved from {user['family_name']} to {new_family} (New ID: {new_user_id})")
 
-# ---------------- Utilities ----------------
-def load_snapshot():
-    return {
-        "users": get_all_users(),
-        "transactions": get_all_transactions(),
-        "loans": get_all_loans(),
-        "rules": get_rules()
-    }
+def remove_user(user_id):
+    ref = db.collection("users").document(user_id)
+    doc = ref.get()
+    if not doc.exists:
+        st.error("⚠️ User not found")
+        return
+    user = doc.to_dict()
+    db.collection("removed_users").document(user_id).set({
+        **user,
+        "removed_at": datetime.now(UTC).isoformat()
+    })
+    ref.delete()
+    st.success(f"🗑️ User {user_id} removed and archived.")
 
-# ---------------- Streamlit UI ----------------
-data = load_snapshot()
+def remove_family(family_name):
+    users = get_users_by_family(family_name)
+    if not users:
+        st.warning("⚠️ No users found for this family")
+        return
+    batch = db.batch()
+    for u in users:
+        user_ref = db.collection("users").document(u["user_id"])
+        removed_ref = db.collection("removed_users").document(u["user_id"])
+        batch.set(removed_ref, {**u, "removed_at": datetime.now(UTC).isoformat()})
+        batch.delete(user_ref)
+    batch.commit()
+    st.success(f"🗑️ Family '{family_name}' and {len(users)} users removed & archived.")
 
+# ---------------- WhatsApp Helper ----------------
+def send_whatsapp(to_number, message):
+    digits = "".join(filter(str.isdigit, to_number))
+    if digits.startswith("0"):
+        digits = digits[1:]
+    encoded_message = urllib.parse.quote(message)
+    wa_url = f"https://wa.me/{digits}?text={encoded_message}"
+    st.markdown(f"[💬 Send WhatsApp Message]({wa_url})", unsafe_allow_html=True)
+
+# ---------------- Transactions ----------------
+def add_deposit(user_id, amount, date, remarks=None):
+    user = get_user(user_id)
+    if not user:
+        st.error("⚠️ User not found")
+        return None, None
+    prev_balance = get_balance(user_id)
+    tx_ref = db.collection("transactions").document()
+    tx_ref.set({
+        "user_id": user_id,
+        "family_name": user.get("family_name"),
+        "amount": amount,
+        "type": "deposit",
+        "date": date.isoformat(),
+        "remarks": remarks or "",
+        "created_at": datetime.now(UTC).isoformat()
+    })
+    new_balance = get_balance(user_id)
+    st.success(f"✅ Deposit of {amount} added for {user_id} ({user.get('first_name')}) on {date}")
+    return prev_balance, new_balance
+
+
+def add_withdrawal(user_id, amount, date, remarks=None):
+    user = get_user(user_id)
+    if not user:
+        st.error("⚠️ User not found")
+        return None, None
+    prev_balance = get_balance(user_id)
+    balance = prev_balance
+    if amount > balance:
+        st.error(f"⚠️ Insufficient balance. Available: {balance}")
+        return None, None
+    tx_ref = db.collection("transactions").document()
+    tx_ref.set({
+        "user_id": user_id,
+        "family_name": user.get("family_name"),
+        "amount": amount,
+        "type": "withdrawal",
+        "date": date.isoformat(),
+        "remarks": remarks or "",
+        "created_at": datetime.now(UTC).isoformat()
+    })
+    new_balance = get_balance(user_id)
+    st.success(f"✅ Withdrawal of {amount} recorded for {user_id} ({user.get('first_name')}) on {date}")
+    return prev_balance, new_balance
+def get_transactions(user_id=None, family_name=None):
+    ref = db.collection("transactions")
+    if user_id:
+        ref = ref.where("user_id", "==", user_id)
+    if family_name:
+        ref = ref.where("family_name", "==", family_name)
+    return [tx.to_dict() for tx in ref.stream()]
+
+def get_total_deposits(user_id=None, family_name=None):
+    txs = get_transactions(user_id, family_name)
+    return sum(tx["amount"] for tx in txs if tx.get("type")=="deposit")
+
+def get_total_withdrawals(user_id=None, family_name=None):
+    txs = get_transactions(user_id, family_name)
+    return sum(tx["amount"] for tx in txs if tx.get("type")=="withdrawal")
+
+def get_balance(user_id=None, family_name=None):
+    return get_total_deposits(user_id, family_name) - get_total_withdrawals(user_id, family_name)
+
+# ---------------- Loan Rules ----------------
+def get_loan_rules():
+    doc = db.collection("config").document("loan_rules").get()
+    if not doc.exists:
+        # default rules
+        db.collection("config").document("loan_rules").set({
+            "family_max_loans": 3,
+            "user_max_loans": 1,
+            "interest_pct": 10.0,
+            "deposit_pct_for_loan": 50.0
+        })
+        doc = db.collection("config").document("loan_rules").get()
+    return doc.to_dict()
+
+def get_family_loans(family_name):
+    return [l.to_dict() for l in db.collection("loans").where("family_name", "==", family_name).where("status", "==", "active").stream()]
+
+def get_user_loans(user_id):
+    return [l.to_dict() for l in db.collection("loans").where("user_id", "==", user_id).where("status", "==", "active").stream()]
+
+def calculate_emi(principal, interest_rate, tenure_months):
+    """
+    Flat EMI calculation: EMI = (Loan Amount + Total Interest) / Total EMIs
+    """
+    total_interest = principal * (interest_rate / 100)
+    total_payable = principal + total_interest
+    emi = total_payable / tenure_months
+    return round(emi, 2)
+
+def max_loan_amount(user_id, family_name):
+    rules = get_loan_rules()
+    total_dep = get_total_deposits(user_id=user_id)
+    user_existing_loans = sum(l["principal_amount"] for l in get_user_loans(user_id))
+    max_user_amount = (total_dep * rules["deposit_pct_for_loan"]/100) - user_existing_loans
+    return max(0, max_user_amount)
+
+# ---------------- Admin Dashboard ----------------
 if is_admin():
-    menu = st.sidebar.selectbox("Navigation", [
-        "Dashboard", "Users", "Create User", "Manage Rules",
-        "Deposits / Interest", "Loans", "Transactions",
-        "Summary & Projections", "Seed Users"
-    ])
-else:
-    menu = st.sidebar.selectbox("Navigation", [
-        "Dashboard", "Users", "Transactions", "Summary & Projections"
-    ])
+    st.title("👨‍💼 Admin Dashboard")
+    menu = st.sidebar.radio("Menu", [
+        "User Management",
+        "Add Deposit",
+        "Add Withdrawal",
+        "Transaction History / Totals",
+        "Deposit Summary",
+        "Send WhatsApp Summary","Repay Loan","Loan Management","Rules / Config","Dashboard / Stats"], key="admin_sidebar_menu")
 
-# Example of protecting menus
-if menu == "Create User":
-    if not is_admin():
-        st.warning("Admins only. Please login.")
-    else:
-        # your create user code here...
-        pass
+    # ---------------- Transaction History / Totals ----------------
+    if menu == "Transaction History / Totals":
+        st.subheader("Transaction History / Totals")
+        families = get_all_families()
+        selected_family = st.selectbox("Select Family (Optional)", ["All"] + families, key="txn_family_select")
+        family_name = selected_family if selected_family != "All" else None
+        txns = get_transactions(family_name=family_name)
+        if txns:
+            df = pd.DataFrame(txns)
+            df["date"] = pd.to_datetime(df["date"]).dt.date
+            df["balance_after_txn"] = df.apply(lambda x: get_balance(user_id=x["user_id"]), axis=1)
+            st.dataframe(df.sort_values("date", ascending=False))
+            st.markdown(f"**Total Deposits:** {get_total_deposits(family_name=family_name)}")
+            st.markdown(f"**Total Withdrawals:** {get_total_withdrawals(family_name=family_name)}")
+            st.markdown(f"**Current Balance:** {get_balance(family_name=family_name)}")
+        else:
+            st.info("No transactions found.")
 
-elif menu == "Manage Rules":
-    if not is_admin():
-        st.warning("Admins only. Please login.")
-    else:
-        # your manage rules code here...
-        pass
+    # ---------------- Deposit Summary ----------------
+    elif menu == "Deposit Summary":
+        st.subheader("Deposit Summary per Family/User")
+        families = get_all_families()
+        selected_family = st.selectbox("Select Family", ["All"] + families, key="summary_family_select")
+        if selected_family == "All":
+            summary = []
+            for fam in families:
+                total_dep = get_total_deposits(family_name=fam)
+                total_with = get_total_withdrawals(family_name=fam)
+                balance = get_balance(family_name=fam)
+                summary.append({
+                    "Family": fam,
+                    "Total Deposits": total_dep,
+                    "Total Withdrawals": total_with,
+                    "Balance": balance
+                })
+            st.dataframe(pd.DataFrame(summary))
+        else:
+            users = get_users_by_family(selected_family)
+            summary = []
+            for u in users:
+                total_dep = get_total_deposits(user_id=u["user_id"])
+                total_with = get_total_withdrawals(user_id=u["user_id"])
+                balance = get_balance(user_id=u["user_id"])
+                summary.append({
+                    "User": u["first_name"],
+                    "Total Deposits": total_dep,
+                    "Total Withdrawals": total_with,
+                    "Balance": balance
+                })
+            st.dataframe(pd.DataFrame(summary))
 
-elif menu == "Users":
-    st.header("Users")
-    users_df = pd.DataFrame(data["users"]) if data["users"] else pd.DataFrame()
-    st.dataframe(users_df)
-    if is_admin():
-        st.subheader("Admin actions")
-        # your deposit/freeze/interest logic here...
+    # ---------------- Add Deposit / Withdrawal / User Management ----------------
+    # [Keep your previous Add Deposit, Add Withdrawal, User Management, WhatsApp Summary code here unchanged]
 
-# (repeat same pattern for Deposits/Interest, Loans, Seed Users)
 
-# Keep Dashboard, Transactions, Summary always visible (guest or admin)
+    # ---------------- User Management ----------------
+    elif menu == "User Management":
+        st.subheader("User Management")
+        user_tab = st.radio("Choose Option", ["➕ Add User", "✏️ Update User", "👀 View Users", "🔀 Move User", "🗑️ Remove User/Family"], key="user_mgmt_tab")
 
-st.sidebar.markdown("---")
-st.sidebar.write("Firestore project connected")
+        # ➕ Add User
+        if user_tab == "➕ Add User":
+            families = get_all_families()
+            family_mode = st.radio("Family Option", ["Select Existing Family", "Create New Family"], key="family_mode_add")
+            if family_mode == "Select Existing Family" and families:
+                family_name = st.selectbox("Choose Family", families, key="select_family_add")
+            else:
+                family_name = st.text_input("Enter New Family Name", key="new_family_add")
+            first_name = st.text_input("First Name", key="first_name_add")
+            mobile_number = st.text_input("Mobile Number", key="mobile_number_add")
+            if family_name:
+                suggested_user_id = get_next_user_id(family_name)
+                st.info(f"Next User ID will be: **{suggested_user_id}**")
+            if st.button("Add User", key="add_user_button"):
+                if first_name and family_name:
+                    add_user(first_name, family_name, mobile_number)
+                else:
+                    st.error("⚠️ Family Name and First Name are required")
+
+        # ✏️ Update User
+        elif user_tab == "✏️ Update User":
+            with st.form("update_user_form"):
+                user_id = st.text_input("User ID to Update (e.g., Smith-2)", key="update_user_id")
+                new_first = st.text_input("New First Name (leave blank if no change)", key="update_first_name")
+                new_family = st.text_input("New Family Name (leave blank if no change)", key="update_family_name")
+                new_status = st.selectbox("Status", ["", "active", "frozen"], key="update_status")
+                new_mobile = st.text_input("New Mobile Number (leave blank if no change)", key="update_mobile")
+                submitted = st.form_submit_button("Update User")
+                if submitted:
+                    if user_id:
+                        update_user(user_id, new_first or None, new_family or None, new_status or None, new_mobile or None)
+                    else:
+                        st.error("⚠️ User ID required")
+
+        # 👀 View Users
+        elif user_tab == "👀 View Users":
+            view_option = st.radio("Choose View", ["Individual", "Family"], key="view_option")
+            if view_option == "Individual":
+                all_users = [u.to_dict() for u in db.collection("users").stream()]
+                user_options = [f"{u['first_name']} ({u['user_id']})" for u in all_users]
+                selected_user_str = st.selectbox("Select User", [""] + user_options, key="view_individual_select")
+                if st.button("Fetch User", key="fetch_individual_button"):
+                    if selected_user_str:
+                        uid = selected_user_str.split("(")[-1].replace(")","")
+                        user = get_user(uid)
+                        if user:
+                            st.json(user)
+                        else:
+                            st.warning("No user found")
+                    else:
+                        st.warning("Select a user")
+            elif view_option == "Family":
+                families = get_all_families()
+                if families:
+                    fam = st.selectbox("Select Family", families, key="view_family_select")
+                    if st.button("Fetch Family", key="fetch_family_button"):
+                        users = get_users_by_family(fam)
+                        if users:
+                            st.dataframe(pd.DataFrame(users))
+                        else:
+                            st.warning("No users found for this family")
+                else:
+                    st.info("No families available yet.")
+
+        # 🔀 Move User
+        elif user_tab == "🔀 Move User":
+            move_user_id = st.text_input("Enter User ID to Move", key="move_user_id")
+            families = get_all_families()
+            new_family = st.selectbox("Move to Family", families + ["Create New"], key="move_select_family")
+            if new_family == "Create New":
+                new_family = st.text_input("Enter New Family Name", key="move_new_family_name")
+            if st.button("Move User", key="move_user_button"):
+                if move_user_id and new_family:
+                    move_user(move_user_id, new_family)
+                else:
+                    st.error("⚠️ Provide User ID and Family Name")
+
+        # 🗑️ Remove User/Family
+        elif user_tab == "🗑️ Remove User/Family":
+            remove_mode = st.radio("Remove", ["User", "Family"], key="remove_mode")
+            if remove_mode == "User":
+                uid_remove = st.text_input("Enter User ID to Remove", key="remove_user_id")
+                if st.button("Remove User", key="remove_user_button"):
+                    if uid_remove:
+                        remove_user(uid_remove)
+                    else:
+                        st.error("⚠️ User ID required")
+            elif remove_mode == "Family":
+                families = get_all_families()
+                fam_remove = st.selectbox("Select Family to Remove", families, key="remove_family_select")
+                if st.button("Remove Family", key="remove_family_button"):
+                    if fam_remove:
+                        remove_family(fam_remove)
+                    else:
+                        st.error("⚠️ Family required")
+
+
+    # ---------------- Add Deposit ----------------
+    elif menu == "Add Deposit":
+        st.subheader("Add Deposit for User")
+        families = get_all_families()
+        if families:
+            selected_family = st.selectbox("Select Family", families, key="deposit_family_select")
+            users_in_family = get_users_by_family(selected_family)
+            if users_in_family:
+                user_options = [f"{u['first_name']} ({u['user_id']})" for u in users_in_family]
+                selected_user_str = st.selectbox("Select User", user_options, key="deposit_user_select")
+                deposit_user_id = selected_user_str.split("(")[-1].replace(")", "")
+                
+                # Show current balance and total deposits
+                current_balance = get_balance(user_id=deposit_user_id)
+                total_deposits = get_total_deposits(user_id=deposit_user_id)
+                st.info(f"💰 Current Balance: {current_balance} | Total Deposits so far: {total_deposits}")
+            else:
+                st.warning("No users found in this family.")
+                deposit_user_id = None
+        else:
+            st.info("No families available.")
+            deposit_user_id = None
+
+        deposit_amount = st.number_input("Deposit Amount", min_value=0.0, step=1.0, key="deposit_amount")
+        deposit_date = st.date_input("Deposit Date", value=datetime.now().date(), key="deposit_date")
+        deposit_remarks = st.text_input("Remarks / Comments", key="deposit_remarks")  # <-- Add this
+
+        if st.button("Add Deposit", key="deposit_button"):
+            if deposit_user_id and deposit_amount > 0:
+                prev_balance, new_balance = add_deposit(deposit_user_id, deposit_amount, deposit_date,deposit_remarks)
+                if prev_balance is not None:
+                    user = get_user(deposit_user_id)
+                    total_deposits = get_total_deposits(user_id=deposit_user_id)
+                    msg = (
+                        f"Hi {user['first_name']}, your deposit of {deposit_amount} has been added on {deposit_date}.\n"
+                        f"💰 Previous Balance: {prev_balance}\n"
+                        f"💰 Current Balance: {new_balance}\n"
+                        f"📊 Total Deposits so far: {total_deposits}\n"
+                    )
+                if deposit_remarks and deposit_remarks.strip():
+                    msg += f"\n📝 Remarks: {deposit_remarks}"
+                    if user.get("mobile_number"):
+                        send_whatsapp(user["mobile_number"], msg)
+
+
+    # ---------------- Add Withdrawal ----------------
+    elif menu == "Add Withdrawal":
+        st.subheader("Record Withdrawal for User")
+        families = get_all_families()
+        if families:
+            selected_family = st.selectbox("Select Family", families, key="withdraw_family_select")
+            users_in_family = get_users_by_family(selected_family)
+            if users_in_family:
+                user_options = [f"{u['first_name']} ({u['user_id']})" for u in users_in_family]
+                selected_user_str = st.selectbox("Select User", user_options, key="withdraw_user_select")
+                withdraw_user_id = selected_user_str.split("(")[-1].replace(")", "")
+            else:
+                st.warning("No users found in this family.")
+                withdraw_user_id = None
+        else:
+            st.info("No families available.")
+            withdraw_user_id = None
+
+        withdraw_amount = st.number_input("Withdrawal Amount", min_value=0.0, step=1.0, key="withdraw_amount")
+        withdraw_date = st.date_input("Withdrawal Date", value=datetime.now().date(), key="withdraw_date")
+        withdraw_remarks = st.text_input("Remarks / Comments", key="withdraw_remarks")  # <-- Add this
+
+        if st.button("Record Withdrawal", key="withdraw_button"):
+            if withdraw_user_id and withdraw_amount > 0:
+                # Optional: get remarks from input
+                data_remarks = st.text_input("Enter Remarks (Optional)", key="withdraw_remarks")
+                
+                prev_balance, new_balance = add_withdrawal(withdraw_user_id, withdraw_amount, withdraw_date, remarks=data_remarks)
+                
+                if prev_balance is not None:
+                    user = get_user(withdraw_user_id)
+                    msg = (
+                        f"Hi {user['first_name']}, your withdrawal of {withdraw_amount} has been recorded on {withdraw_date}.\n"
+                        f"💰 Previous Balance: {prev_balance}\n"
+                        f"💰 Current Balance: {new_balance}"
+                    )
+                    if data_remarks and data_remarks.strip():
+                        msg += f"\n📝 Remarks: {data_remarks}"
+                    
+                    if user.get("mobile_number"):
+                        send_whatsapp(user["mobile_number"], msg)
+            else:
+                st.error("⚠️ Provide valid User and Amount")
+
+    # ---------------- Transaction History / Totals ----------------
+    elif menu == "Transaction History / Totals":
+        st.subheader("Transaction History / Totals")
+        families = get_all_families()
+        selected_family = st.selectbox("Select Family (Optional)", ["All"] + families, key="txn_family_select")
+        family_name = selected_family if selected_family != "All" else None
+        txns = get_transactions(family_name=family_name)
+        if txns:
+            df = pd.DataFrame(txns)
+            df["date"] = pd.to_datetime(df["date"]).dt.date
+            st.dataframe(df.sort_values("date", ascending=False))
+            st.markdown(f"**Total Deposits:** {get_total_deposits(family_name=family_name)}")
+            st.markdown(f"**Total Withdrawals:** {get_total_withdrawals(family_name=family_name)}")
+        else:
+            st.info("No transactions found.")
+
+    # ---------------- Deposit Summary ----------------
+    elif menu == "Deposit Summary":
+        st.subheader("Deposit Summary per Family/User")
+        families = get_all_families()
+        selected_family = st.selectbox("Select Family", ["All"] + families, key="summary_family_select")
+        if selected_family == "All":
+            summary = []
+            for fam in families:
+                total_dep = get_total_deposits(family_name=fam)
+                total_with = get_total_withdrawals(family_name=fam)
+                summary.append({"Family": fam, "Total Deposits": total_dep, "Total Withdrawals": total_with})
+            st.dataframe(pd.DataFrame(summary))
+        else:
+            users = get_users_by_family(selected_family)
+            summary = []
+            for u in users:
+                total_dep = get_total_deposits(user_id=u["user_id"])
+                total_with = get_total_withdrawals(user_id=u["user_id"])
+                summary.append({"User": u["first_name"], "Total Deposits": total_dep, "Total Withdrawals": total_with})
+            st.dataframe(pd.DataFrame(summary))
+
+    # ---------------- Send WhatsApp Summary ----------------
+    elif menu == "Send WhatsApp Summary":
+        st.subheader("Send WhatsApp Summary to Users")
+        families = get_all_families()
+        selected_family = st.selectbox("Select Family", ["All"] + families, key="wa_family_select")
+        users_to_notify = []
+        if selected_family == "All":
+            for fam in families:
+                users_to_notify.extend(get_users_by_family(fam))
+        else:
+            users_to_notify.extend(get_users_by_family(selected_family))
+
+        message_template = st.text_area("WhatsApp Message Template", value="Hi {name}, your total deposit is {deposit} and total withdrawal is {withdrawal}.", height=120)
+        if st.button("Send WhatsApp Messages", key="wa_send_button"):
+            for u in users_to_notify:
+                if not u.get("mobile_number"):
+                    continue
+                msg = message_template.format(
+                    name=u.get("first_name"),
+                    deposit=get_total_deposits(user_id=u["user_id"]),
+                    withdrawal=get_total_withdrawals(user_id=u["user_id"])
+                )
+                send_whatsapp(u["mobile_number"], msg)
+            st.success("✅ WhatsApp messages prepared for users with mobile numbers.")
+    elif menu == "Loan Management":
+        st.subheader("Loan Management")
+        rules = get_loan_rules()
+        
+        # Step 1: Choose Family
+        families = get_all_families()
+        selected_family = st.selectbox("Select Family", families, key="loan_family_select")
+        family_loans = get_family_loans(selected_family)
+        st.markdown(f"**Active Loans in Family:** {len(family_loans)} / Max Allowed: {rules['family_max_loans']}")
+        
+        # Step 2: Choose Member
+        users_in_family = get_users_by_family(selected_family)
+        user_options = [f"{u['first_name']} ({u['user_id']})" for u in users_in_family]
+        selected_user_str = st.selectbox("Select User", user_options, key="loan_user_select")
+        loan_user_id = selected_user_str.split("(")[-1].replace(")","")
+        user_loans = get_user_loans(loan_user_id)
+        st.markdown(f"**Active Loans for User:** {len(user_loans)} / Max Allowed: {rules['user_max_loans']}")
+        user_total_deposit = get_total_deposits(user_id=loan_user_id)
+        st.markdown(f"**Total Deposits:** {user_total_deposit}")
+        max_loan = max_loan_amount(loan_user_id, selected_family)
+        st.markdown(f"**Eligible Loan Amount:** {max_loan}")
+        
+        # Step 3: New Loan Input
+        new_loan_amount = st.number_input("Loan Amount", min_value=0.0, max_value=max_loan, step=100.0, key="loan_amount")
+        tenure_months = st.number_input("Tenure (months)", min_value=1, step=1, key="loan_tenure")
+        
+        if st.button("Proceed with Loan", key="proceed_loan_button"):
+            if len(family_loans) >= rules["family_max_loans"]:
+                st.error("Family has reached max concurrent loans")
+            elif len(user_loans) >= rules["user_max_loans"]:
+                st.error("User has reached max concurrent loans")
+            elif new_loan_amount <= 0:
+                st.error("Enter a valid loan amount")
+            else:
+                interest_pct = rules["interest_pct"]
+                total_amount = round(new_loan_amount*(1+interest_pct/100),2)
+                emi_amount = calculate_emi(new_loan_amount, interest_pct, tenure_months)
+                loan_ref = db.collection("loans").document()
+                loan_ref.set({
+                    "loan_id": loan_ref.id,
+                    "user_id": loan_user_id,
+                    "family_name": selected_family,
+                    "principal_amount": new_loan_amount,
+                    "total_loan_amount": total_amount,
+                    "interest_rate": interest_pct,
+                    "tenure_months": tenure_months,
+                    "emi_amount": emi_amount,
+                    "paid_amount": 0.0,
+                    "remaining_amount": total_amount,
+                    "start_date": datetime.now().isoformat(),
+                    "status": "active",
+                    "created_at": datetime.now().isoformat()
+                })
+                st.success(f"✅ Loan Granted! Total Loan Amount: {total_amount}, EMI: {emi_amount}")
+                # Optionally, send whatsapp
+                user = get_user(loan_user_id)
+                if user.get("mobile_number"):
+                    msg = f"Hi {user['first_name']}, your loan of {new_loan_amount} has been approved. Total: {total_amount}, EMI: {emi_amount}, Tenure: {tenure_months} months."
+                    send_whatsapp(user["mobile_number"], msg)
+    elif menu == "Repay Loan":
+        st.subheader("Repay Loan")
+        families = get_all_families()
+        selected_family = st.selectbox("Select Family", families, key="repay_family")
+        users_in_family = get_users_by_family(selected_family)
+        user_options = [f"{u['first_name']} ({u['user_id']})" for u in users_in_family]
+        selected_user_str = st.selectbox("Select User", user_options, key="repay_user")
+        loan_user_id = selected_user_str.split("(")[-1].replace(")","")
+        loans = get_user_loans(loan_user_id)
+        
+        if loans:
+            loan_options = [f"{l['loan_id']} | Remaining: {l['remaining_amount']}" for l in loans]
+            selected_loan_str = st.selectbox("Select Loan", loan_options, key="select_loan")
+            loan_id = selected_loan_str.split("|")[0].strip()
+            loan_doc = db.collection("loans").document(loan_id)
+            loan = loan_doc.get().to_dict()
+            
+            st.markdown(f"**EMI Amount:** {loan['emi_amount']}, **Remaining Amount:** {loan['remaining_amount']}")
+            # Calculate paid EMIs and remaining EMIs
+            paid_emi_count = int(loan['paid_amount'] // loan['emi_amount'])
+            remaining_emi_count = int((loan['remaining_amount'] + loan['paid_amount'] - loan['paid_amount']) // loan['emi_amount'])
+            st.markdown(f"**Paid EMIs:** {paid_emi_count}, **Remaining EMIs:** {remaining_emi_count}")
+
+            pay_amount = st.number_input("Payment Amount", min_value=0.0, max_value=loan['remaining_amount'], step=1.0)
+        if st.button("Make Payment", key="repay_button"):
+            loan['paid_amount'] += pay_amount
+            loan['remaining_amount'] -= pay_amount
+            interest_deposit_remarks = None
+
+            # Check if this is the last payment
+            if loan['remaining_amount'] <= 0:
+                excess = abs(loan['remaining_amount'])
+                loan['remaining_amount'] = 0
+                loan['status'] = "completed"
+
+                # Ask if we want to deposit interest
+                st.info("🎉 Loan fully repaid!")
+                interest_amount = st.number_input("Interest Amount to Credit (optional)", min_value=0.0, step=1.0)
+                interest_remarks = st.text_input("Remarks for Interest Deposit", value="Interest credited for loan repayment")
+                if st.button("Deposit Interest", key="deposit_interest_button"):
+                    if interest_amount > 0:
+                        add_deposit(loan_user_id, interest_amount, datetime.now().date(), remarks=interest_remarks)
+                        st.success(f"💰 Interest of {interest_amount} deposited to user account.")
+
+                # Deposit excess if any
+                if excess > 0:
+                    add_deposit(loan_user_id, excess, datetime.now().date(), remarks="Excess payment returned")
+
+            loan_doc.update(loan)
+
+    elif menu == "Rules / Config":
+        st.subheader("Configure Rules")
+
+        # ---------------- Fetch existing rules ----------------
+        rules_doc = db.collection("config").document("rules").get()
+        rules = rules_doc.to_dict() if rules_doc.exists else {}
+
+        loan_rules_doc = db.collection("config").document("loan_rules").get()
+        loan_rules = loan_rules_doc.to_dict() if loan_rules_doc.exists else {}
+
+        st.markdown("### Deposit / General Rules")
+        deposit_interest = st.number_input(
+            "Deposit Interest (%)", 
+            value=rules.get("deposit_interest_pct", 5.0), step=0.1
+        )
+        loan_capability = st.number_input(
+            "Loan Capability (%)", 
+            value=rules.get("loan_capability_pct", 50.0), step=1.0
+        )
+
+        st.markdown("### Loan Rules")
+        family_max_loans = st.number_input(
+            "Max Loans per Family", 
+            value=loan_rules.get("family_max_loans", 3), min_value=1, step=1
+        )
+        user_max_loans = st.number_input(
+            "Max Loans per User", 
+            value=loan_rules.get("user_max_loans", 1), min_value=1, step=1
+        )
+        loan_interest = st.number_input(
+            "Loan Interest Rate (%)", 
+            value=loan_rules.get("interest_pct", 10.0), step=0.1
+        )
+        deposit_pct_for_loan = st.number_input(
+            "Deposit % Used for Loan Eligibility", 
+            value=loan_rules.get("deposit_pct_for_loan", 50.0), step=1.0
+        )
+
+        # ---------------- Live Loan Summary ----------------
+        st.markdown("### Current Active Loans")
+
+        families = get_all_families()
+        if families:
+            family_summary = []
+            loan_summary = []
+
+            for fam in families:
+                fam_loans = get_family_loans(fam)
+                total_active_loans_family = len(fam_loans)
+                family_summary.append({
+                    "Family": fam,
+                    "Active Loans": total_active_loans_family,
+                    "Max Allowed": family_max_loans
+                })
+
+                users = get_users_by_family(fam)
+                for u in users:
+                    user_loans = get_user_loans(u["user_id"])
+                    loan_summary.append({
+                        "Family": fam,
+                        "User": u["first_name"],
+                        "User ID": u["user_id"],
+                        "Active Loans": len(user_loans),
+                        "Max Allowed": user_max_loans
+                    })
+
+            st.markdown("#### Family Level Summary")
+            st.dataframe(pd.DataFrame(family_summary).sort_values("Family"))
+
+            st.markdown("#### User Level Breakdown")
+            st.dataframe(pd.DataFrame(loan_summary).sort_values(["Family", "User"]))
+
+        else:
+            st.info("No families found.")
+
+        # ---------------- Update Rules Button ----------------
+        if st.button("Update Rules"):
+            # Update general rules
+            db.collection("config").document("rules").set({
+                "deposit_interest_pct": deposit_interest,
+                "loan_capability_pct": loan_capability
+            })
+            # Update loan rules
+            db.collection("config").document("loan_rules").set({
+                "family_max_loans": family_max_loans,
+                "user_max_loans": user_max_loans,
+                "interest_pct": loan_interest,
+                "deposit_pct_for_loan": deposit_pct_for_loan
+            })
+            st.success("✅ Rules updated successfully")
+    elif menu == "Dashboard / Stats":
+        display_dashboard()
