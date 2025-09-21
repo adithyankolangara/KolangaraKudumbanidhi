@@ -395,7 +395,7 @@ def send_whatsapp_action(user, action_type, **kwargs):
         msg += f"നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽ {kwargs.get('new_family')} ഉപതാവഴിയുടെ കീഴിലേക്ക്  മാറ്റിയിരിക്കുന്നു . New User ID: {kwargs.get('new_user_id')}."
         
     elif action_type == "loan_granted":
-        msg += f"🏦 നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽനിന്ന് താങ്കൾക്ക്: {kwargs.get('amount')}രൂപ  ലോൺ  അനുവദിച്ചിരിക്കുന്നു \n, ആകെ തിരിച്ചടവ് - പലിശയും  ചേർത്ത് (പലിശ സംഘ്യ ലോൺ ഗഡുക്കൾ തീരുന്ന മുറക്ക്  വ്യക്തിഗത  അക്കൗന്റിലേക്ക് നിക്ഷേപമായി  ചേർക്കുന്നതാണ് : {kwargs.get('total')}\nതവണ സംഖ്യ: {kwargs.get('emi')}, കാലാവധി: {kwargs.get('tenure')} മാസം."
+        msg += f"🏦 നമസ്കാരം കൊളങ്ങര കുടുംബ നിധിയിൽനിന്ന് താങ്കൾക്ക്: {kwargs.get('amount')}രൂപ  ലോൺ  അനുവദിച്ചിരിക്കുന്നു \n, ആകെ തിരിച്ചടവ് - പലിശയും  ചേർത്ത് : {kwargs.get('total')}\nതവണ സംഖ്യ: {kwargs.get('emi')}, കാലാവധി: {kwargs.get('tenure')} മാസം."
         
     elif action_type == "loan_repaid":
         msg += f"💳 Loan Payment of {kwargs.get('amount')} received on {kwargs.get('date')}.\n"
@@ -1177,6 +1177,7 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
+
 
 
 
