@@ -384,7 +384,7 @@ def send_whatsapp_action(user, action_type, **kwargs):
             msg += f"📝 Remarks: {kwargs.get('remarks')}"
             
     elif action_type == "user_created":
-        msg += f"✅ നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽ - {kwargs.get('family_name')} ഉപതാവഴിയുടെ കീഴിൽ  അംഗത്വം  തുടങ്ങിയിരിക്കുന്നു ഇൽ \n. Your User ID: {kwargs.get('user_id')}."
+        msg += f"✅ നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽ - {kwargs.get('family_name')} ഉപതാവഴിയുടെ കീഴിൽ  അംഗത്വം  തുടങ്ങിയിരിക്കുന്നു  \n. Your User ID: {kwargs.get('user_id')}."
         
     elif action_type == "user_updated":
         msg += "📝 നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽ താങ്കളുടെ  വ്യക്തിഗത വിവരങ്ങൾ അപ്ഡേറ്റ്  ചെയ്തിരിക്കുന്നു :\n"
@@ -398,7 +398,7 @@ def send_whatsapp_action(user, action_type, **kwargs):
         msg += f"🏦 നമസ്കാരം കൊളങ്ങര കുടുംബ നിധിയിൽനിന്ന് താങ്കൾക്ക്: {kwargs.get('amount')}രൂപ  ലോൺ  അനുവദിച്ചിരിക്കുന്നു \n, ആകെ തിരിച്ചടവ് - പലിശയും  ചേർത്ത് : {kwargs.get('total')}\nതവണ സംഖ്യ: {kwargs.get('emi')}, കാലാവധി: {kwargs.get('tenure')} മാസം."
         
     elif action_type == "loan_repaid":
-        msg += f"💳 Loan Payment of {kwargs.get('amount')} received on {kwargs.get('date')}.\n"
+        msg += f"💳 ലോണിലേക്ക് {kwargs.get('amount')} രൂപ {kwargs.get('date')} തിയ്യതിക്ക്  അടച്ചിരിക്കുന്നു.\n"
         msg += f"ആകെ  {kwargs.get('total_emis')} തവണകളിൽ {kwargs.get('paid_emis')}) അടച്ചു\n"
         msg += f"ഇനി  {kwargs.get('remaining')} രൂപ  തിരിച്ചു അടക്കാനുണ്ട് "
         if kwargs.get('remarks'):
@@ -407,7 +407,7 @@ def send_whatsapp_action(user, action_type, **kwargs):
             msg += f"\nInterest Credited: {kwargs.get('interest')}"
     
     elif action_type == "loan_completed":
-        msg += "🎉 Congratulations! Your loan has been fully repaid.\n"
+        msg += "🎉 ലോൺ  മുഴുവനായി അടച്ചിരിക്കുന്നു .\n"
         msg += f"ആകെ: {kwargs.get('total_paid')} രൂപ  തിരിച്ചടച്ചിരിക്കുന്നു \n"
         msg += f"{kwargs.get('total_emis')} തവണ\n"
         msg += f"പൂർത്തിയാക്കിയ  തിയ്യതി : {kwargs.get('date')}"
@@ -1177,6 +1177,7 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
+
 
 
 
