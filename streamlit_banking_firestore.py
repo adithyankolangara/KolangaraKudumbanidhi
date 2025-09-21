@@ -589,7 +589,7 @@ if is_admin():
         "Add Withdrawal",
         "Transaction History / Totals",
         "Deposit Summary",
-        "Send WhatsApp Summary","Repay Loan","Loan Management","Rules / Config","Dashboard / Stats"], key="admin_sidebar_menu")
+        "Send WhatsApp Summary","Repay Loan","Loan Management","Rules / Config","Dashboard"], key="admin_sidebar_menu")
 
     # ---------------- Transaction History / Totals ----------------
     if menu == "Transaction History / Totals":
@@ -1182,8 +1182,9 @@ if is_admin():
                 )
                 st.success(f"✅ Payment of {pay_amount} recorded and WhatsApp notification prepared.")
     
-    elif menu == "Dashboard / Stats":
+    elif menu == "Dashboard":
         display_dashboard()
+
 
 
 
