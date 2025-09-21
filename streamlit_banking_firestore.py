@@ -7,7 +7,7 @@ from pathlib import Path
 import urllib.parse
 
 # ---------------- Streamlit Page Config ----------------
-st.set_page_config(page_title="കൊളങ്ങര കുടുംബനിധി ", layout="centered")
+st.set_page_config(page_title="കൊളങ്ങര കുടുംബനിധി ", layout="wide")
 
 # ---------------- Hide Streamlit Default UI ----------------
 import streamlit as st
@@ -1154,5 +1154,6 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
+
 
 
