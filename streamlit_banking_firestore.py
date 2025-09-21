@@ -5,6 +5,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import datetime, UTC
 from pathlib import Path
+# from db1 import init_firebase
 import urllib.parse
 
 # ---------------- Streamlit Page Config ----------------
@@ -195,7 +196,6 @@ def display_dashboard():
     st.markdown("#### User Level Loan Details")
     st.dataframe(pd.DataFrame(loan_summary_user).sort_values(["Family", "User"]))
 
-
 def is_admin():
     
     return st.session_state.user.get("role") == "admin"
@@ -279,6 +279,9 @@ def move_user(user_id, new_family):
     })
     ref.delete()
     st.success(f"✅ User moved from {user['family_name']} to {new_family} (New ID: {new_user_id})")
+    
+    # Send WhatsApp notification
+    send_whatsapp_action(user, "user_moved", new_family=new_family, new_user_id=new_user_id)
 
 def remove_user(user_id):
     ref = db.collection("users").document(user_id)
@@ -293,6 +296,9 @@ def remove_user(user_id):
     })
     ref.delete()
     st.success(f"🗑️ User {user_id} removed and archived.")
+    
+    # Send WhatsApp notification
+    send_whatsapp_action(user, "user_updated", status="removed")
 
 def remove_family(family_name):
     users = get_users_by_family(family_name)
@@ -305,6 +311,8 @@ def remove_family(family_name):
         removed_ref = db.collection("removed_users").document(u["user_id"])
         batch.set(removed_ref, {**u, "removed_at": datetime.now(UTC).isoformat()})
         batch.delete(user_ref)
+        # Send WhatsApp for each user
+        send_whatsapp_action(u, "user_updated", status="removed")
     batch.commit()
     st.success(f"🗑️ Family '{family_name}' and {len(users)} users removed & archived.")
 
@@ -317,13 +325,91 @@ def send_whatsapp(to_number, message):
     wa_url = f"https://wa.me/{digits}?text={encoded_message}"
     st.markdown(f"[💬 Send WhatsApp Message]({wa_url})", unsafe_allow_html=True)
 
+def send_whatsapp_action(user, action_type, **kwargs):
+    """
+    Send a WhatsApp message for a given action.
+    action_type: deposit, withdrawal, user_created, user_updated, user_moved, loan_granted, loan_repaid
+    kwargs: action-specific details
+    """
+    if not user.get("mobile_number"):
+        return
+    
+    msg = f"Hi {user.get('first_name')},\n"
+    
+    if action_type == "deposit":
+        msg += f"💰 Deposit of {kwargs.get('amount')} done on {kwargs.get('date')}.\n"
+        msg += f"Previous Balance: {kwargs.get('prev_balance')}\nCurrent Balance: {kwargs.get('new_balance')}\n"
+        if kwargs.get("remarks"):
+            msg += f"📝 Remarks: {kwargs.get('remarks')}"
+            
+    elif action_type == "withdrawal":
+        msg += f"💸 Withdrawal of {kwargs.get('amount')} done on {kwargs.get('date')}.\n"
+        msg += f"Previous Balance: {kwargs.get('prev_balance')}\nCurrent Balance: {kwargs.get('new_balance')}\n"
+        if kwargs.get("remarks"):
+            msg += f"📝 Remarks: {kwargs.get('remarks')}"
+            
+    elif action_type == "user_created":
+        msg += f"✅ Your account has been created in family {kwargs.get('family_name')}. Your User ID: {kwargs.get('user_id')}."
+        
+    elif action_type == "user_updated":
+        msg += "📝 Your account details have been updated:\n"
+        for k,v in kwargs.items():
+            msg += f"{k}: {v}\n"
+            
+    elif action_type == "user_moved":
+        msg += f"🔀 You have been moved to family {kwargs.get('new_family')}. New User ID: {kwargs.get('new_user_id')}."
+        
+    elif action_type == "loan_granted":
+        msg += f"🏦 Loan Approved!\nAmount: {kwargs.get('amount')}, Total Payable: {kwargs.get('total')}\nEMI: {kwargs.get('emi')}, Tenure: {kwargs.get('tenure')} months."
+        
+    elif action_type == "loan_repaid":
+        msg += f"💳 Loan Payment of {kwargs.get('amount')} received on {kwargs.get('date')}.\n"
+        msg += f"EMI Progress: {kwargs.get('emi_progress')} (Paid {kwargs.get('paid_emis')} of {kwargs.get('total_emis')})\n"
+        msg += f"Remaining Amount: {kwargs.get('remaining')}"
+        if kwargs.get('remarks'):
+            msg += f"\n📝 Remarks: {kwargs.get('remarks')}"
+        if kwargs.get('interest'):
+            msg += f"\nInterest Credited: {kwargs.get('interest')}"
+    
+    elif action_type == "loan_completed":
+        msg += "🎉 Congratulations! Your loan has been fully repaid.\n"
+        msg += f"Total Paid: {kwargs.get('total_paid')}\n"
+        msg += f"Tenure: {kwargs.get('total_emis')} EMIs\n"
+        msg += f"Completion Date: {kwargs.get('date')}"
+
+    elif action_type == "summary":
+        # Summary message
+        msg += f"📊 Account Summary:\n"
+        msg += f"Total Deposits: {kwargs.get('deposit')}\n"
+        msg += f"Total Withdrawals: {kwargs.get('withdrawal')}\n"
+        
+        loans = kwargs.get("loans", [])
+        if loans:
+            msg += "\n💳 Loan Details:\n"
+            for l in loans:
+                msg += (
+                    f"- Loan {l['loan_id']}:\n"
+                    f"  Paid EMIs: {l['paid_emis']}/{l['total_emis']}\n"
+                    f"  Paid Amount: {l['paid_amount']}\n"
+                    f"  Remaining: {l['remaining_amount']}\n"
+                    f"  Status: {l['status']}\n"
+                )
+        else:
+            msg += "\n✅ No active loans."
+    
+    send_whatsapp(user.get("mobile_number"), msg)
+
+# ---------------- Transactions ----------------
 # ---------------- Transactions ----------------
 def add_deposit(user_id, amount, date, remarks=None):
     user = get_user(user_id)
     if not user:
         st.error("⚠️ User not found")
         return None, None
+    
     prev_balance = get_balance(user_id)
+    
+    # Save transaction in DB
     tx_ref = db.collection("transactions").document()
     tx_ref.set({
         "user_id": user_id,
@@ -334,8 +420,24 @@ def add_deposit(user_id, amount, date, remarks=None):
         "remarks": remarks or "",
         "created_at": datetime.now(UTC).isoformat()
     })
+    
     new_balance = get_balance(user_id)
     st.success(f"✅ Deposit of {amount} added for {user_id} ({user.get('first_name')}) on {date}")
+    
+    # Send WhatsApp
+    if user.get("mobile_number"):
+        msg = (
+            f"💰 Deposit Alert\n"
+            f"User: {user['first_name']}\n"
+            f"Date: {date}\n"
+            f"Previous Balance: {prev_balance}\n"
+            f"Deposited Amount: {amount}\n"
+            f"Current Balance: {new_balance}"
+        )
+        if remarks and remarks.strip():
+            msg += f"\n📝 Remarks: {remarks}"
+        send_whatsapp(user["mobile_number"], msg)
+    
     return prev_balance, new_balance
 
 
@@ -344,11 +446,13 @@ def add_withdrawal(user_id, amount, date, remarks=None):
     if not user:
         st.error("⚠️ User not found")
         return None, None
+    
     prev_balance = get_balance(user_id)
-    balance = prev_balance
-    if amount > balance:
-        st.error(f"⚠️ Insufficient balance. Available: {balance}")
+    if amount > prev_balance:
+        st.error(f"⚠️ Insufficient balance. Available: {prev_balance}")
         return None, None
+
+    # Save transaction in DB
     tx_ref = db.collection("transactions").document()
     tx_ref.set({
         "user_id": user_id,
@@ -359,9 +463,26 @@ def add_withdrawal(user_id, amount, date, remarks=None):
         "remarks": remarks or "",
         "created_at": datetime.now(UTC).isoformat()
     })
+    
     new_balance = get_balance(user_id)
     st.success(f"✅ Withdrawal of {amount} recorded for {user_id} ({user.get('first_name')}) on {date}")
+    
+    # Send WhatsApp
+    if user.get("mobile_number"):
+        msg = (
+            f"💸 Withdrawal Alert\n"
+            f"User: {user['first_name']}\n"
+            f"Date: {date}\n"
+            f"Previous Balance: {prev_balance}\n"
+            f"Withdrawn Amount: {amount}\n"
+            f"Current Balance: {new_balance}"
+        )
+        if remarks and remarks.strip():
+            msg += f"\n📝 Remarks: {remarks}"
+        send_whatsapp(user["mobile_number"], msg)
+    
     return prev_balance, new_balance
+
 def get_transactions(user_id=None, family_name=None):
     ref = db.collection("transactions")
     if user_id:
@@ -422,6 +543,7 @@ def max_loan_amount(user_id, family_name):
     family_existing_loans = sum(l["principal_amount"] for l in get_family_loans(family_name))
     # maximum allowed based on rules
     max_family_amount = (family_total_dep * rules["deposit_pct_for_loan"] / 100) - family_existing_loans
+
     return max(0, max_family_amount)
 
 
@@ -488,8 +610,6 @@ if is_admin():
             st.dataframe(pd.DataFrame(summary))
 
     # ---------------- Add Deposit / Withdrawal / User Management ----------------
-    # [Keep your previous Add Deposit, Add Withdrawal, User Management, WhatsApp Summary code here unchanged]
-
 
     # ---------------- User Management ----------------
     elif menu == "User Management":
@@ -511,11 +631,13 @@ if is_admin():
                 st.info(f"Next User ID will be: **{suggested_user_id}**")
             if st.button("Add User", key="add_user_button"):
                 if first_name and family_name:
+                    user_id = get_next_user_id(family_name)
                     add_user(first_name, family_name, mobile_number)
+                    user = get_user(user_id)  # fetch newly created user
+                    send_whatsapp_action(user, "user_created", family_name=family_name, user_id=user_id)
                 else:
                     st.error("⚠️ Family Name and First Name are required")
-
-        # ✏️ Update User
+                # ✏️ Update User
         elif user_tab == "✏️ Update User":
             with st.form("update_user_form"):
                 user_id = st.text_input("User ID to Update (e.g., Smith-2)", key="update_user_id")
@@ -527,6 +649,8 @@ if is_admin():
                 if submitted:
                     if user_id:
                         update_user(user_id, new_first or None, new_family or None, new_status or None, new_mobile or None)
+                        user = get_user(user_id)
+                        send_whatsapp_action(user, "user_updated", first_name=new_first, family=new_family, status=new_status, mobile=new_mobile)
                     else:
                         st.error("⚠️ User ID required")
 
@@ -570,6 +694,7 @@ if is_admin():
             if st.button("Move User", key="move_user_button"):
                 if move_user_id and new_family:
                     move_user(move_user_id, new_family)
+
                 else:
                     st.error("⚠️ Provide User ID and Family Name")
 
@@ -592,8 +717,7 @@ if is_admin():
                     else:
                         st.error("⚠️ Family required")
 
-
-    # ---------------- Add Deposit ----------------
+# ---------------- Add Deposit ----------------
     elif menu == "Add Deposit":
         st.subheader("Add Deposit for User")
         families = get_all_families()
@@ -609,6 +733,7 @@ if is_admin():
                 current_balance = get_balance(user_id=deposit_user_id)
                 total_deposits = get_total_deposits(user_id=deposit_user_id)
                 st.info(f"💰 Current Balance: {current_balance} | Total Deposits so far: {total_deposits}")
+                
             else:
                 st.warning("No users found in this family.")
                 deposit_user_id = None
@@ -637,7 +762,6 @@ if is_admin():
                     if user.get("mobile_number"):
                         send_whatsapp(user["mobile_number"], msg)
 
-
     # ---------------- Add Withdrawal ----------------
     elif menu == "Add Withdrawal":
         st.subheader("Record Withdrawal for User")
@@ -662,87 +786,113 @@ if is_admin():
 
         if st.button("Record Withdrawal", key="withdraw_button"):
             if withdraw_user_id and withdraw_amount > 0:
-                # Optional: get remarks from input
-                data_remarks = st.text_input("Enter Remarks (Optional)", key="withdraw_remarks")
+                # data_remarks = st.text_input("Enter Remarks (Optional)", key="withdraw_remarks")
                 
-                prev_balance, new_balance = add_withdrawal(withdraw_user_id, withdraw_amount, withdraw_date, remarks=data_remarks)
+                prev_balance, new_balance = add_withdrawal(withdraw_user_id, withdraw_amount, withdraw_date, remarks=withdraw_remarks)
                 
                 if prev_balance is not None:
                     user = get_user(withdraw_user_id)
-                    msg = (
-                        f"Hi {user['first_name']}, your withdrawal of {withdraw_amount} has been recorded on {withdraw_date}.\n"
-                        f"💰 Previous Balance: {prev_balance}\n"
-                        f"💰 Current Balance: {new_balance}"
+                    # Use send_whatsapp_action instead of manually formatting the message
+                    send_whatsapp_action(
+                        user, 
+                        action_type="withdrawal",
+                        amount=withdraw_amount,
+                        date=withdraw_date,
+                        prev_balance=prev_balance,
+                        new_balance=new_balance,
+                        remarks=withdraw_remarks
                     )
-                    if data_remarks and data_remarks.strip():
-                        msg += f"\n📝 Remarks: {data_remarks}"
-                    
-                    if user.get("mobile_number"):
-                        send_whatsapp(user["mobile_number"], msg)
             else:
                 st.error("⚠️ Provide valid User and Amount")
 
-    # ---------------- Transaction History / Totals ----------------
-    elif menu == "Transaction History / Totals":
-        st.subheader("Transaction History / Totals")
-        families = get_all_families()
-        selected_family = st.selectbox("Select Family (Optional)", ["All"] + families, key="txn_family_select")
-        family_name = selected_family if selected_family != "All" else None
-        txns = get_transactions(family_name=family_name)
-        if txns:
-            df = pd.DataFrame(txns)
-            df["date"] = pd.to_datetime(df["date"]).dt.date
-            st.dataframe(df.sort_values("date", ascending=False))
-            st.markdown(f"**Total Deposits:** {get_total_deposits(family_name=family_name)}")
-            st.markdown(f"**Total Withdrawals:** {get_total_withdrawals(family_name=family_name)}")
-        else:
-            st.info("No transactions found.")
-
-    # ---------------- Deposit Summary ----------------
-    elif menu == "Deposit Summary":
-        st.subheader("Deposit Summary per Family/User")
-        families = get_all_families()
-        selected_family = st.selectbox("Select Family", ["All"] + families, key="summary_family_select")
-        if selected_family == "All":
-            summary = []
-            for fam in families:
-                total_dep = get_total_deposits(family_name=fam)
-                total_with = get_total_withdrawals(family_name=fam)
-                summary.append({"Family": fam, "Total Deposits": total_dep, "Total Withdrawals": total_with})
-            st.dataframe(pd.DataFrame(summary))
-        else:
-            users = get_users_by_family(selected_family)
-            summary = []
-            for u in users:
-                total_dep = get_total_deposits(user_id=u["user_id"])
-                total_with = get_total_withdrawals(user_id=u["user_id"])
-                summary.append({"User": u["first_name"], "Total Deposits": total_dep, "Total Withdrawals": total_with})
-            st.dataframe(pd.DataFrame(summary))
-
-    # ---------------- Send WhatsApp Summary ----------------
     elif menu == "Send WhatsApp Summary":
-        st.subheader("Send WhatsApp Summary to Users")
-        families = get_all_families()
-        selected_family = st.selectbox("Select Family", ["All"] + families, key="wa_family_select")
-        users_to_notify = []
-        if selected_family == "All":
-            for fam in families:
-                users_to_notify.extend(get_users_by_family(fam))
-        else:
-            users_to_notify.extend(get_users_by_family(selected_family))
+        st.subheader("📲 Send WhatsApp Summary to a User")
 
-        message_template = st.text_area("WhatsApp Message Template", value="Hi {name}, your total deposit is {deposit} and total withdrawal is {withdrawal}.", height=120)
-        if st.button("Send WhatsApp Messages", key="wa_send_button"):
-            for u in users_to_notify:
-                if not u.get("mobile_number"):
-                    continue
+        families = get_all_families()
+        selected_family = st.selectbox("Select Family", families, key="wa_family_select")
+
+        users_to_notify = get_users_by_family(selected_family) if selected_family else []
+        user_names = {u["first_name"]: u for u in users_to_notify}
+
+        selected_user_name = st.selectbox("Select User", list(user_names.keys()), key="wa_user_select")
+        selected_user = user_names.get(selected_user_name)
+
+        if selected_user:
+            deposit_total = get_total_deposits(user_id=selected_user["user_id"])
+            withdrawal_total = get_total_withdrawals(user_id=selected_user["user_id"])
+
+            from firebase_admin import firestore
+
+            def get_user_loan_summary(user_id: str) -> dict:
+                """
+                Fetch loan summary for a given user_id.
+                Returns dict with paid_emi, pending_emi, balance.
+                """
+                db = firestore.client()
+                loans_ref = db.collection("loans").where("user_id", "==", user_id)
+                docs = loans_ref.stream()
+
+                loan_summary = {
+                    "paid_emi": 0,
+                    "pending_emi": 0,
+                    "balance": 0
+                }
+
+                for doc in docs:
+                    loan = doc.to_dict()
+                    tenure = loan.get("tenure", 0)
+                    emi = loan.get("emi", 0)
+                    paid_emi = loan.get("paid_emi", 0)
+                    balance = loan.get("balance", 0)
+
+                    # If multiple loans, we accumulate
+                    loan_summary["paid_emi"] += paid_emi
+                    loan_summary["pending_emi"] += max(tenure - paid_emi, 0)
+                    loan_summary["balance"] += balance if balance else max((tenure - paid_emi) * emi, 0)
+
+                return loan_summary
+
+            loan_info = get_user_loan_summary(selected_user["user_id"])  # <-- you need to implement this
+            paid_emi = loan_info.get("paid_emi", 0)
+            pending_emi = loan_info.get("pending_emi", 0)
+            balance_amount = loan_info.get("balance", 0)
+
+            message_template = st.text_area(
+                "WhatsApp Message Template",
+                value=(
+                    "Hi {name},\n\n"
+                    "💰 Total Deposit: {deposit}\n"
+                    "💸 Total Withdrawal: {withdrawal}\n\n"
+                    "🏦 Loan Summary:\n"
+                    "✅ Paid EMI: {paid_emi}\n"
+                    "⌛ Pending EMI: {pending_emi}\n"
+                    "📉 Balance Amount: {balance}\n"
+                ),
+                height=180
+            )
+
+            if st.button("Send WhatsApp Message", key="wa_send_button"):
                 msg = message_template.format(
-                    name=u.get("first_name"),
-                    deposit=get_total_deposits(user_id=u["user_id"]),
-                    withdrawal=get_total_withdrawals(user_id=u["user_id"])
+                    name=selected_user.get("first_name"),
+                    deposit=deposit_total,
+                    withdrawal=withdrawal_total,
+                    paid_emi=paid_emi,
+                    pending_emi=pending_emi,
+                    balance=balance_amount,
                 )
-                send_whatsapp(u["mobile_number"], msg)
-            st.success("✅ WhatsApp messages prepared for users with mobile numbers.")
+
+                send_whatsapp_action(
+                    selected_user,
+                    action_type="summary",
+                    msg=msg,
+                    deposit=deposit_total,
+                    withdrawal=withdrawal_total,
+                    paid_emi=paid_emi,
+                    pending_emi=pending_emi,
+                    balance=balance_amount,
+                )
+                st.success(f"✅ WhatsApp message sent to {selected_user.get('first_name')}")
+
     elif menu == "Loan Management":
         st.subheader("Loan Management")
         rules = get_loan_rules()
@@ -778,7 +928,7 @@ if is_admin():
                 st.error("Enter a valid loan amount")
             else:
                 interest_pct = rules["interest_pct"]
-                total_amount = round(new_loan_amount*(1+interest_pct/100),2)
+                total_amount = round(new_loan_amount * (1 + interest_pct / 100), 2)
                 emi_amount = calculate_emi(new_loan_amount, interest_pct, tenure_months)
                 loan_ref = db.collection("loans").document()
                 loan_ref.set({
@@ -797,11 +947,108 @@ if is_admin():
                     "created_at": datetime.now().isoformat()
                 })
                 st.success(f"✅ Loan Granted! Total Loan Amount: {total_amount}, EMI: {emi_amount}")
-                # Optionally, send whatsapp
+                
+                # Send WhatsApp using action function
                 user = get_user(loan_user_id)
-                if user.get("mobile_number"):
-                    msg = f"Hi {user['first_name']}, your loan of {new_loan_amount} has been approved. Total: {total_amount}, EMI: {emi_amount}, Tenure: {tenure_months} months."
-                    send_whatsapp(user["mobile_number"], msg)
+                send_whatsapp_action(
+                    user,
+                    "loan_granted",
+                    amount=new_loan_amount,
+                    total=total_amount,
+                    emi=emi_amount,
+                    tenure=tenure_months
+                )
+        elif menu == "Rules / Config":
+            st.subheader("Configure Rules")
+
+            # ---------------- Fetch existing rules ----------------
+            rules_doc = db.collection("config").document("rules").get()
+            rules = rules_doc.to_dict() if rules_doc.exists else {}
+
+            loan_rules_doc = db.collection("config").document("loan_rules").get()
+            loan_rules = loan_rules_doc.to_dict() if loan_rules_doc.exists else {}
+
+            st.markdown("### Deposit / General Rules")
+            deposit_interest = st.number_input(
+                "Deposit Interest (%)", 
+                value=rules.get("deposit_interest_pct", 5.0), step=0.1
+            )
+            loan_capability = st.number_input(
+                "Loan Capability (%)", 
+                value=rules.get("loan_capability_pct", 50.0), step=1.0
+            )
+
+            st.markdown("### Loan Rules")
+            family_max_loans = st.number_input(
+                "Max Loans per Family", 
+                value=loan_rules.get("family_max_loans", 3), min_value=1, step=1
+            )
+            user_max_loans = st.number_input(
+                "Max Loans per User", 
+                value=loan_rules.get("user_max_loans", 1), min_value=1, step=1
+            )
+            loan_interest = st.number_input(
+                "Loan Interest Rate (%)", 
+                value=loan_rules.get("interest_pct", 10.0), step=0.1
+            )
+            deposit_pct_for_loan = st.number_input(
+                "Deposit % Used for Loan Eligibility", 
+                value=loan_rules.get("deposit_pct_for_loan", 50.0), step=1.0
+            )
+
+            # ---------------- Live Loan Summary ----------------
+            st.markdown("### Current Active Loans")
+
+            families = get_all_families()
+            if families:
+                family_summary = []
+                loan_summary = []
+
+                for fam in families:
+                    fam_loans = get_family_loans(fam)
+                    total_active_loans_family = len(fam_loans)
+                    family_summary.append({
+                        "Family": fam,
+                        "Active Loans": total_active_loans_family,
+                        "Max Allowed": family_max_loans
+                    })
+
+                    users = get_users_by_family(fam)
+                    for u in users:
+                        user_loans = get_user_loans(u["user_id"])
+                        loan_summary.append({
+                            "Family": fam,
+                            "User": u["first_name"],
+                            "User ID": u["user_id"],
+                            "Active Loans": len(user_loans),
+                            "Max Allowed": user_max_loans
+                        })
+
+                st.markdown("#### Family Level Summary")
+                st.dataframe(pd.DataFrame(family_summary).sort_values("Family"))
+
+                st.markdown("#### User Level Breakdown")
+                st.dataframe(pd.DataFrame(loan_summary).sort_values(["Family", "User"]))
+
+            else:
+                st.info("No families found.")
+
+            # ---------------- Update Rules Button ----------------
+            if st.button("Update Rules"):
+                # Update general rules
+                db.collection("config").document("rules").set({
+                    "deposit_interest_pct": deposit_interest,
+                    "loan_capability_pct": loan_capability
+                })
+                # Update loan rules
+                db.collection("config").document("loan_rules").set({
+                    "family_max_loans": family_max_loans,
+                    "user_max_loans": user_max_loans,
+                    "interest_pct": loan_interest,
+                    "deposit_pct_for_loan": deposit_pct_for_loan
+                })
+                st.success("✅ Rules updated successfully")
+        
     elif menu == "Repay Loan":
         st.subheader("Repay Loan")
         families = get_all_families()
@@ -822,125 +1069,73 @@ if is_admin():
             st.markdown(f"**EMI Amount:** {loan['emi_amount']}, **Remaining Amount:** {loan['remaining_amount']}")
             # Calculate paid EMIs and remaining EMIs
             paid_emi_count = int(loan['paid_amount'] // loan['emi_amount'])
-            remaining_emi_count = int((loan['remaining_amount'] + loan['paid_amount'] - loan['paid_amount']) // loan['emi_amount'])
+            total_emis = loan["tenure_months"]
+            remaining_emi_count = total_emis - paid_emi_count
             st.markdown(f"**Paid EMIs:** {paid_emi_count}, **Remaining EMIs:** {remaining_emi_count}")
 
             pay_amount = st.number_input("Payment Amount", min_value=0.0, max_value=loan['remaining_amount'], step=1.0)
+            remarks = st.text_input("Payment Remarks", value="Loan EMI payment")
+
         if st.button("Make Payment", key="repay_button"):
+            payment_date = datetime.now().date().isoformat()
+            
+            # Update loan amounts
             loan['paid_amount'] += pay_amount
             loan['remaining_amount'] -= pay_amount
-            interest_deposit_remarks = None
+
+            # Log the payment history inside loan doc
+            if "payments" not in loan:
+                loan["payments"] = []
+            loan["payments"].append({
+                "amount": pay_amount,
+                "date": payment_date,
+                "remarks": remarks
+            })
+
+            # Recalculate EMI status
+            paid_emi_count = int(loan['paid_amount'] // loan['emi_amount'])
+            total_emis = loan["tenure_months"]
+            remaining_emi_count = total_emis - paid_emi_count
+
+            loan_completed = False
 
             # Check if this is the last payment
             if loan['remaining_amount'] <= 0:
                 excess = abs(loan['remaining_amount'])
                 loan['remaining_amount'] = 0
                 loan['status'] = "completed"
-
-                # Ask if we want to deposit interest
-                st.info("🎉 Loan fully repaid!")
-                interest_amount = st.number_input("Interest Amount to Credit (optional)", min_value=0.0, step=1.0)
-                interest_remarks = st.text_input("Remarks for Interest Deposit", value="Interest credited for loan repayment")
-                if st.button("Deposit Interest", key="deposit_interest_button"):
-                    if interest_amount > 0:
-                        add_deposit(loan_user_id, interest_amount, datetime.now().date(), remarks=interest_remarks)
-                        st.success(f"💰 Interest of {interest_amount} deposited to user account.")
+                loan_completed = True
 
                 # Deposit excess if any
                 if excess > 0:
                     add_deposit(loan_user_id, excess, datetime.now().date(), remarks="Excess payment returned")
 
+            # Save updates to Firestore
             loan_doc.update(loan)
 
-    elif menu == "Rules / Config":
-        st.subheader("Configure Rules")
-
-        # ---------------- Fetch existing rules ----------------
-        rules_doc = db.collection("config").document("rules").get()
-        rules = rules_doc.to_dict() if rules_doc.exists else {}
-
-        loan_rules_doc = db.collection("config").document("loan_rules").get()
-        loan_rules = loan_rules_doc.to_dict() if loan_rules_doc.exists else {}
-
-        st.markdown("### Deposit / General Rules")
-        deposit_interest = st.number_input(
-            "Deposit Interest (%)", 
-            value=rules.get("deposit_interest_pct", 5.0), step=0.1
-        )
-        loan_capability = st.number_input(
-            "Loan Capability (%)", 
-            value=rules.get("loan_capability_pct", 50.0), step=1.0
-        )
-
-        st.markdown("### Loan Rules")
-        family_max_loans = st.number_input(
-            "Max Loans per Family", 
-            value=loan_rules.get("family_max_loans", 3), min_value=1, step=1
-        )
-        user_max_loans = st.number_input(
-            "Max Loans per User", 
-            value=loan_rules.get("user_max_loans", 1), min_value=1, step=1
-        )
-        loan_interest = st.number_input(
-            "Loan Interest Rate (%)", 
-            value=loan_rules.get("interest_pct", 10.0), step=0.1
-        )
-        deposit_pct_for_loan = st.number_input(
-            "Deposit % Used for Loan Eligibility", 
-            value=loan_rules.get("deposit_pct_for_loan", 50.0), step=1.0
-        )
-
-        # ---------------- Live Loan Summary ----------------
-        st.markdown("### Current Active Loans")
-
-        families = get_all_families()
-        if families:
-            family_summary = []
-            loan_summary = []
-
-            for fam in families:
-                fam_loans = get_family_loans(fam)
-                total_active_loans_family = len(fam_loans)
-                family_summary.append({
-                    "Family": fam,
-                    "Active Loans": total_active_loans_family,
-                    "Max Allowed": family_max_loans
-                })
-
-                users = get_users_by_family(fam)
-                for u in users:
-                    user_loans = get_user_loans(u["user_id"])
-                    loan_summary.append({
-                        "Family": fam,
-                        "User": u["first_name"],
-                        "User ID": u["user_id"],
-                        "Active Loans": len(user_loans),
-                        "Max Allowed": user_max_loans
-                    })
-
-            st.markdown("#### Family Level Summary")
-            st.dataframe(pd.DataFrame(family_summary).sort_values("Family"))
-
-            st.markdown("#### User Level Breakdown")
-            st.dataframe(pd.DataFrame(loan_summary).sort_values(["Family", "User"]))
-
-        else:
-            st.info("No families found.")
-
-        # ---------------- Update Rules Button ----------------
-        if st.button("Update Rules"):
-            # Update general rules
-            db.collection("config").document("rules").set({
-                "deposit_interest_pct": deposit_interest,
-                "loan_capability_pct": loan_capability
-            })
-            # Update loan rules
-            db.collection("config").document("loan_rules").set({
-                "family_max_loans": family_max_loans,
-                "user_max_loans": user_max_loans,
-                "interest_pct": loan_interest,
-                "deposit_pct_for_loan": deposit_pct_for_loan
-            })
-            st.success("✅ Rules updated successfully")
+            # Send WhatsApp notification
+            user = get_user(loan_user_id)
+            if loan_completed:
+                send_whatsapp_action(
+                    user,
+                    "loan_completed",
+                    total_paid=loan['paid_amount'],
+                    total_emis=total_emis,
+                    date=payment_date
+                )
+                st.success("🎉 Loan fully repaid! Completion notification sent.")
+            else:
+                send_whatsapp_action(
+                    user,
+                    "loan_repaid",
+                    amount=pay_amount,
+                    remaining=loan['remaining_amount'],
+                    date=payment_date,
+                    paid_emis=paid_emi_count,
+                    total_emis=total_emis,
+                    remarks=remarks
+                )
+                st.success(f"✅ Payment of {pay_amount} recorded and WhatsApp notification prepared.")
+    
     elif menu == "Dashboard / Stats":
         display_dashboard()
