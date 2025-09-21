@@ -10,25 +10,27 @@ import urllib.parse
 st.set_page_config(page_title="കൊളങ്ങര കുടുംബനിധി ", layout="centered")
 
 # ---------------- Hide Streamlit Default UI ----------------
-st.markdown("""
+import streamlit as st
+
+# ---------------- Hide Streamlit Branding Completely ----------------
+hide_streamlit_style = """
     <style>
+    /* Hide Streamlit's default header, footer, and menus */
     #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
     header {visibility: hidden;}
-    </style>
-""", unsafe_allow_html=True)
-hide_streamlit_ui = """
-    <style>
-    /* Hide MainMenu, footer and viewer toolbar */
-    #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    .stAppDeployButton {display: none;}
-    .stActionButton {display: none;}
-    .viewerBadge_container__1QSob {display: none;}
+
+    /* Hide Deploy/Manage App button */
+    .stAppDeployButton {display: none !important;}
+    .stActionButton {display: none !important;}
+    .viewerBadge_container__1QSob {display: none !important;}
+    .viewerBadge_link__1S137 {display: none !important;}
+
+    /* Hide Streamlit bottom-right toolbar (including Manage app) */
+    .css-164nlkn.egzxvld1 {display: none !important;}
     </style>
 """
-import streamlit as st
-st.markdown(hide_streamlit_ui, unsafe_allow_html=True)
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # ---------------- Firebase Init ----------------
 def init_firebase():
@@ -1152,4 +1154,5 @@ if is_admin():
     
     elif menu == "Dashboard / Stats":
         display_dashboard()
+
 
