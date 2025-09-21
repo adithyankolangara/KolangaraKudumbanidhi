@@ -1,7 +1,5 @@
-import os
 import streamlit as st
 import pandas as pd
-import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import datetime, UTC
 from pathlib import Path
@@ -9,7 +7,7 @@ from pathlib import Path
 import urllib.parse
 
 # ---------------- Streamlit Page Config ----------------
-st.set_page_config(page_title="Mini Banking App (Firestore)", layout="wide")
+st.set_page_config(page_title="കൊളങ്ങര കുടുംബനിധി ", layout="centered")
 
 # ---------------- Hide Streamlit Default UI ----------------
 st.markdown("""
@@ -337,35 +335,35 @@ def send_whatsapp_action(user, action_type, **kwargs):
     msg = f"Hi {user.get('first_name')},\n"
     
     if action_type == "deposit":
-        msg += f"💰 Deposit of {kwargs.get('amount')} done on {kwargs.get('date')}.\n"
-        msg += f"Previous Balance: {kwargs.get('prev_balance')}\nCurrent Balance: {kwargs.get('new_balance')}\n"
+        msg += f"കൊളങ്ങര  കുടുംബ നിധിയിൽ  {kwargs.get('amount')} രൂപയുടെ നിക്ഷേപം  {kwargs.get('date')} നു കിട്ടി.\n"
+        msg += f"മുൻപിലത്തെ ബാലൻസ് : {kwargs.get('prev_balance')} രൂപ\nഇപ്പോളത്തെ  ബാലൻസ് : {kwargs.get('new_balance')} രൂപ\n"
         if kwargs.get("remarks"):
             msg += f"📝 Remarks: {kwargs.get('remarks')}"
             
     elif action_type == "withdrawal":
-        msg += f"💸 Withdrawal of {kwargs.get('amount')} done on {kwargs.get('date')}.\n"
-        msg += f"Previous Balance: {kwargs.get('prev_balance')}\nCurrent Balance: {kwargs.get('new_balance')}\n"
+        msg += f"💸 കൊളങ്ങര  കുടുംബ നിധിയിൽ നിന്ന് {kwargs.get('amount')} രൂപ {kwargs.get('date')} നു  പിൻവലിച്ചു.\n"
+        msg += f"മുൻപിലത്തെ ബാലൻസ് : {kwargs.get('prev_balance')} രൂപ\nഇപ്പോളത്തെ  ബാലൻസ് :{kwargs.get('new_balance')} രൂപ\n"
         if kwargs.get("remarks"):
             msg += f"📝 Remarks: {kwargs.get('remarks')}"
             
     elif action_type == "user_created":
-        msg += f"✅ Your account has been created in family {kwargs.get('family_name')}. Your User ID: {kwargs.get('user_id')}."
+        msg += f"✅ നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽ - {kwargs.get('family_name')} ഉപതാവഴിയുടെ കീഴിൽ  അംഗത്വം  തുടങ്ങിയിരിക്കുന്നു ഇൽ \n. Your User ID: {kwargs.get('user_id')}."
         
     elif action_type == "user_updated":
-        msg += "📝 Your account details have been updated:\n"
+        msg += "📝 നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽ താങ്കളുടെ  വ്യക്തിഗത വിവരങ്ങൾ അപ്ഡേറ്റ്  ചെയ്തിരിക്കുന്നു :\n"
         for k,v in kwargs.items():
             msg += f"{k}: {v}\n"
             
     elif action_type == "user_moved":
-        msg += f"🔀 You have been moved to family {kwargs.get('new_family')}. New User ID: {kwargs.get('new_user_id')}."
+        msg += f"നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽ {kwargs.get('new_family')} ഉപതാവഴിയുടെ കീഴിലേക്ക്  മാറ്റിയിരിക്കുന്നു . New User ID: {kwargs.get('new_user_id')}."
         
     elif action_type == "loan_granted":
-        msg += f"🏦 Loan Approved!\nAmount: {kwargs.get('amount')}, Total Payable: {kwargs.get('total')}\nEMI: {kwargs.get('emi')}, Tenure: {kwargs.get('tenure')} months."
+        msg += f"🏦 നമസ്കാരം കൊളങ്ങര  കുടുംബ നിധിയിൽനിന്ന് താങ്കൾക്ക്: {kwargs.get('amount')}രൂപ  ലോൺ  അനുവദിച്ചിരിക്കുന്നു \n, ആകെ തിരിച്ചടവ് - പലിശയും  ചേർത്ത് (പലിശ സംഘ്യ ലോൺ ഗഡുക്കൾ തീരുന്ന മുറക്ക്  വ്യക്തിഗത  അക്കൗന്റിലേക്ക് നിക്ഷേപമായി  ചേർക്കുന്നതാണ് : {kwargs.get('total')}\nതവണ സംഖ്യ: {kwargs.get('emi')}, കാലാവധി: {kwargs.get('tenure')} മാസം."
         
     elif action_type == "loan_repaid":
         msg += f"💳 Loan Payment of {kwargs.get('amount')} received on {kwargs.get('date')}.\n"
-        msg += f"EMI Progress: {kwargs.get('emi_progress')} (Paid {kwargs.get('paid_emis')} of {kwargs.get('total_emis')})\n"
-        msg += f"Remaining Amount: {kwargs.get('remaining')}"
+        msg += f"ആകെ  {kwargs.get('total_emis')} തവണകളിൽ {kwargs.get('paid_emis')}) അടച്ചു\n"
+        msg += f"ഇനി  {kwargs.get('remaining')} രൂപ  തിരിച്ചു അടക്കാനുണ്ട് "
         if kwargs.get('remarks'):
             msg += f"\n📝 Remarks: {kwargs.get('remarks')}"
         if kwargs.get('interest'):
@@ -373,9 +371,9 @@ def send_whatsapp_action(user, action_type, **kwargs):
     
     elif action_type == "loan_completed":
         msg += "🎉 Congratulations! Your loan has been fully repaid.\n"
-        msg += f"Total Paid: {kwargs.get('total_paid')}\n"
-        msg += f"Tenure: {kwargs.get('total_emis')} EMIs\n"
-        msg += f"Completion Date: {kwargs.get('date')}"
+        msg += f"ആകെ: {kwargs.get('total_paid')} രൂപ  തിരിച്ചടച്ചിരിക്കുന്നു \n"
+        msg += f"{kwargs.get('total_emis')} തവണ\n"
+        msg += f"പൂർത്തിയാക്കിയ  തിയ്യതി : {kwargs.get('date')}"
 
     elif action_type == "summary":
         # Summary message
@@ -389,13 +387,12 @@ def send_whatsapp_action(user, action_type, **kwargs):
             for l in loans:
                 msg += (
                     f"- Loan {l['loan_id']}:\n"
-                    f"  Paid EMIs: {l['paid_emis']}/{l['total_emis']}\n"
-                    f"  Paid Amount: {l['paid_amount']}\n"
-                    f"  Remaining: {l['remaining_amount']}\n"
-                    f"  Status: {l['status']}\n"
+                    f"  തവണ: {l['paid_emis']}/{l['total_emis']}\n"
+                    f"  അടച്ച തുക : : {l['paid_amount']}\n"
+                    f"  ബാക്കി അടക്കാനുള്ളത് :: {l['remaining_amount']}\n"
                 )
         else:
-            msg += "\n✅ No active loans."
+            msg += "\n✅  നിലവിൽ ലോണുകൾ ഒന്നും ഇല്ല്യ."
     
     send_whatsapp(user.get("mobile_number"), msg)
 
@@ -425,21 +422,20 @@ def add_deposit(user_id, amount, date, remarks=None):
     st.success(f"✅ Deposit of {amount} added for {user_id} ({user.get('first_name')}) on {date}")
     
     # Send WhatsApp
-    if user.get("mobile_number"):
-        msg = (
-            f"💰 Deposit Alert\n"
-            f"User: {user['first_name']}\n"
-            f"Date: {date}\n"
-            f"Previous Balance: {prev_balance}\n"
-            f"Deposited Amount: {amount}\n"
-            f"Current Balance: {new_balance}"
-        )
-        if remarks and remarks.strip():
-            msg += f"\n📝 Remarks: {remarks}"
-        send_whatsapp(user["mobile_number"], msg)
+    # if user.get("mobile_number"):
+    #     msg = (
+    #         f"💰 Deposit Alert\n"
+    #         f"User: {user['first_name']}\n"
+    #         f"Date: {date}\n"
+    #         f"Previous Balance: {prev_balance}\n"
+    #         f"Deposited Amount: {amount}\n"
+    #         f"Current Balance: {new_balance}"
+    #     )
+    #     if remarks and remarks.strip():
+    #         msg += f"\n📝 Remarks: {remarks}"
+    #     send_whatsapp(user["mobile_number"], msg)
     
     return prev_balance, new_balance
-
 
 def add_withdrawal(user_id, amount, date, remarks=None):
     user = get_user(user_id)
@@ -468,18 +464,18 @@ def add_withdrawal(user_id, amount, date, remarks=None):
     st.success(f"✅ Withdrawal of {amount} recorded for {user_id} ({user.get('first_name')}) on {date}")
     
     # Send WhatsApp
-    if user.get("mobile_number"):
-        msg = (
-            f"💸 Withdrawal Alert\n"
-            f"User: {user['first_name']}\n"
-            f"Date: {date}\n"
-            f"Previous Balance: {prev_balance}\n"
-            f"Withdrawn Amount: {amount}\n"
-            f"Current Balance: {new_balance}"
-        )
-        if remarks and remarks.strip():
-            msg += f"\n📝 Remarks: {remarks}"
-        send_whatsapp(user["mobile_number"], msg)
+    # if user.get("mobile_number"):
+    #     msg = (
+    #         f"💸 Withdrawal Alert\n"
+    #         f"User: {user['first_name']}\n"
+    #         f"Date: {date}\n"
+    #         f"Previous Balance: {prev_balance}\n"
+    #         f"Withdrawn Amount: {amount}\n"
+    #         f"Current Balance: {new_balance}"
+    #     )
+    #     if remarks and remarks.strip():
+    #         msg += f"\n📝 Remarks: {remarks}"
+    #     send_whatsapp(user["mobile_number"], msg)
     
     return prev_balance, new_balance
 
@@ -743,24 +739,29 @@ if is_admin():
 
         deposit_amount = st.number_input("Deposit Amount", min_value=0.0, step=1.0, key="deposit_amount")
         deposit_date = st.date_input("Deposit Date", value=datetime.now().date(), key="deposit_date")
-        deposit_remarks = st.text_input("Remarks / Comments", key="deposit_remarks")  # <-- Add this
+        deposit_remarks = st.text_input("Remarks / Comments", key="deposit_remarks")
 
         if st.button("Add Deposit", key="deposit_button"):
             if deposit_user_id and deposit_amount > 0:
-                prev_balance, new_balance = add_deposit(deposit_user_id, deposit_amount, deposit_date,deposit_remarks)
+                prev_balance, new_balance = add_deposit(deposit_user_id, deposit_amount, deposit_date, deposit_remarks)
                 if prev_balance is not None:
                     user = get_user(deposit_user_id)
                     total_deposits = get_total_deposits(user_id=deposit_user_id)
-                    msg = (
-                        f"Hi {user['first_name']}, your deposit of {deposit_amount} has been added on {deposit_date}.\n"
-                        f"💰 Previous Balance: {prev_balance}\n"
-                        f"💰 Current Balance: {new_balance}\n"
-                        f"📊 Total Deposits so far: {total_deposits}\n"
+
+                    # ✅ Use centralized WhatsApp action
+                    send_whatsapp_action(
+                        user,
+                        "deposit",
+                        amount=deposit_amount,
+                        date=deposit_date,
+                        prev_balance=prev_balance,
+                        new_balance=new_balance,
+                        total_deposits=total_deposits,
+                        remarks=deposit_remarks
                     )
-                if deposit_remarks and deposit_remarks.strip():
-                    msg += f"\n📝 Remarks: {deposit_remarks}"
-                    if user.get("mobile_number"):
-                        send_whatsapp(user["mobile_number"], msg)
+
+                    st.success(f"✅ Deposit of {deposit_amount} recorded and WhatsApp notification prepared.")
+
 
     # ---------------- Add Withdrawal ----------------
     elif menu == "Add Withdrawal":
